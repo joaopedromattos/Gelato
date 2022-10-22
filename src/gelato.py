@@ -79,7 +79,7 @@ class Gelato(torch.nn.Module):
     def forward(self, edges, edges_pos=None):
 
         # Positive masking.
-        A = self.   A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
+        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
         # Compute trained edge weights.
         if (self.topological_heuristic_type == 'an'):
