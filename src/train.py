@@ -54,9 +54,12 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
     edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(len(train_edges_pos)*train_batch_ratio), shuffle=True)
     edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)
 
+    print("These are the positive edges", edges_pos_loader[0].shape)
+
+
     for batch_edges_pos, batch_edges_neg in tqdm(zip(edges_pos_loader, edges_neg_loader), desc='Train Batch', total=len(edges_pos_loader)):
 
-        optimizer.zero_grad()
+        optimizer.zero_grad() 
 
         batch_edges = torch.vstack([batch_edges_pos, batch_edges_neg]).to(model.A.device)
         batch_true = torch.cat([torch.ones(batch_edges_pos.shape[0], dtype=int), torch.zeros(batch_edges_neg.shape[0], dtype=int)]).to(model.A.device)
@@ -115,6 +118,8 @@ def parse_args():
                         help='Type of the topological heuristic component. Default is ac. ')
     parser.add_argument('--scaling-parameter', type=int, default=3,
                         help='Scaling parameter of ac. Default is 3. ')
+    parser.add_argument('--number-of-anchors', type=int, default=20,
+                        help='Number of anchors used by an. Default is 20. ')
     parser.add_argument('--lr', type=float, default=0.001,
                         help='Learning rate. Default is 0.001. ')
     parser.add_argument('--epochs', type=int, default=250,
@@ -153,6 +158,7 @@ def main():
 
     # Hyperparameters
     A = torch.sparse_coo_tensor(data.edge_index, data.edge_weight.squeeze(), size=(data.num_nodes, data.num_nodes)).to_dense()
+    print("Adjacency matrix shape", A.shape)
     X = data.x
     hyperparameters = {
         'gelato': {
@@ -176,7 +182,9 @@ def main():
             },
             'topological_heuristic_type': args.topological_heuristic_type,
             'topological_heuristic_params': {
-                'scaling_parameter': args.scaling_parameter
+                'scaling_parameter': args.scaling_parameter,
+                'number_of_anchors': args.number_of_anchors,
+                
             },
         },
         'lr': args.lr,

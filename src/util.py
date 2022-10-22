@@ -123,3 +123,8 @@ def compute_batches(rows, batch_size, shuffle=True):
         return torch.split(rows[torch.randperm(rows.shape[0])], batch_size)
     else:
         return torch.split(rows, batch_size)
+
+
+def sample_anchors(node_vec, s):
+    idx = torch.randperm(node_vec.size(0))[:s]
+    return node_vec[idx], idx

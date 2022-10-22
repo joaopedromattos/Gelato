@@ -31,24 +31,47 @@ class Gelato(torch.nn.Module):
         self.topological_heuristic_type = topological_heuristic_type
         self.topological_heuristic_params = topological_heuristic_params
 
+        if (self.topological_heuristic_type == 'an'):
+            self.X_anchors, self.anchors = util.sample_anchors(self.X, self.topological_heuristic_params["number_of_anchors"])
+
         self.graph_learning = {
             'mlp': PairwiseMLP,
         }[graph_learning_type](**graph_learning_params)
+
         self.topological_heuristic = {
             'ac': Autocovariance,
+            'an': AnchorAutocovariance,
         }[topological_heuristic_type](**topological_heuristic_params)
 
         # Compute untrained edge weights and the augmented edges.
-        S = pairwise_kernels(self.X, metric='cosine')
+        if (self.topological_heuristic_type == 'ac'):
+            S = pairwise_kernels(self.X, metric='cosine')
+        elif (self.topological_heuristic_type == 'an'):
+            print("[DEBUG] self.anchors -----> ", type(self.anchors), self.anchors, self.anchors)
+            print("[DEBUG] self.X -----> ", type(self.X), self.X.shape, self.X)
+            S = pairwise_kernels(self.X, self.X_anchors, metric='cosine')
+
         if self.eta != 0.0:
             num_edges = (self.A != 0).sum()
             num_untrained_similarity_edges = floor(num_edges * self.eta)
-            np.fill_diagonal(S, 0)
+
+
+            if (self.topological_heuristic_params == 'an'):
+                # If our algorithm uses anchors, so we have to iterate over the anchors
+                # to zero-out the cases in which we are comparing an anchor with itself.
+                for column_idx, anchor_node_idx in enumerate(self.anchors):
+                    S[anchor_node_idx][column_idx] = 0
+            else:
+                np.fill_diagonal(S, 0)
+
             threshold = np.partition(S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
             self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(S > threshold), persistent=False)
         else:
             self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(np.zeros_like(S)), persistent=False)
+        
         augmented_edge_mask = self.A.to(bool) + self.untrained_similarity_edge_mask
+
+        print("[DEBUG] augmented_edge_mask -----> ", type(augmented_edge_mask), augmented_edge_mask.shape, augmented_edge_mask)
         self.register_buffer('S', torch.relu(torch.FloatTensor(S) * augmented_edge_mask), persistent=False)
         self.augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
         self.augmented_edge_loader = util.compute_batches(self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
@@ -56,10 +79,14 @@ class Gelato(torch.nn.Module):
     def forward(self, edges, edges_pos=None):
 
         # Positive masking.
-        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
+        A = self.   A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
         # Compute trained edge weights.
-        W = torch.zeros((self.A.shape[0], self.A.shape[0]), device=self.A.device)
+        if (self.topological_heuristic_type == 'an'):
+            W = torch.zeros((self.A.shape[0], self.topological_heuristic_params.number_of_anchors), device=self.A.device)
+        else:
+            W = torch.zeros((self.A.shape[0], self.A.shape[0]), device=self.A.device)
+
         for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc='Compute trained weights', total=len(self.augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
             W[tuple(batch.t())] = out
@@ -143,9 +170,30 @@ class PairwiseMLP(torch.nn.Module):
 
 class Autocovariance(torch.nn.Module):
 
-    def __init__(self, scaling_parameter):
+    def __init__(self, scaling_parameter, **kwargs):
         super(Autocovariance, self).__init__()
         self.scaling_parameter = scaling_parameter
+
+    def forward(self, A):
+
+        # Compute Autocovariance matrix.
+        d = A.sum(dim=1)
+        pi = F.normalize(d, p=1, dim=0)
+        M = A / d[:, None]
+        R = torch.diag(pi) @ torch.matrix_power(M, self.scaling_parameter) - torch.outer(pi, pi)
+
+        # Standardize Autocovariance entries.
+        R = (R - R.mean())/R.std()
+
+        return R
+
+class AnchorAutocovariance(torch.nn.Module):
+
+    def __init__(self, scaling_parameter, number_of_anchors):
+        super(AnchorAutocovariance, self).__init__()
+        self.scaling_parameter = scaling_parameter
+        self.number_of_anchors = number_of_anchors
+
 
     def forward(self, A):
 
