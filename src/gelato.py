@@ -75,24 +75,15 @@ class Gelato(torch.nn.Module):
         # Positive masking.
         A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
-        idx = []
-        values = []
+        # Compute trained edge weights.
+        W = torch.zeros(
+            (self.A.shape[0], self.A.shape[0]), device=self.A.device)
 
         for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc='Compute trained weights', total=len(self.augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
-            idx.extend(batch.tolist())
-            values.extend(out)
-        
-        # This replaces the 'W.fill_diagonal_(1)'
-        # since we cannot directly assign values to 
-        # sparse tensors in pytorch.
-        for i in neighbors:
-            idx.append([i, i])
-            values.append(1)
-
-        W = torch.sparse_coo_tensor(np.array(idx).T, values,
-                                    (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
+            W[tuple(batch.t())] = out
         W = W + W.t()
+        W.fill_diagonal_(1)
 
         A_enhanced = self.alpha * A + (1 - self.alpha) * ((A.to(bool) + self.untrained_similarity_edge_mask) * ((1 - self.beta) * self.S + self.beta * W))
 
