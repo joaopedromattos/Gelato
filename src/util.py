@@ -2,7 +2,7 @@ import torch
 import numpy as np
 import random
 from torch_geometric.datasets import Planetoid, Amazon
-from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges
+from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges, k_hop_subgraph
 
 
 def set_random_seed(random_seed):
@@ -123,3 +123,22 @@ def compute_batches(rows, batch_size, shuffle=True):
         return torch.split(rows[torch.randperm(rows.shape[0])], batch_size)
     else:
         return torch.split(rows, batch_size)
+
+def compute_k_hop_neighborhood_edges(hops, edges, edge_index, relabel=False):
+    """
+    Given an edge (or a set of edges), returns the edges and the nodes
+    that constitute the k-hop subgraph around this edge.
+
+    Params:
+    hops (int) -> Number of hops to create the neighborhood
+    edges ()
+    """
+    neighbors_a, edges_neighborhood_node_a, _, _ = k_hop_subgraph(node_idx=edges[0], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+    neighbors_b, edges_neighborhood_node_b, _, _ = k_hop_subgraph(node_idx=edges[1], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+
+    k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node_a, edges_neighborhood_node_b, edges), axis=1), dim=1)
+
+    # Compute trained edge weights.
+    neighbors = torch.unique(torch.cat((neighbors_a, neighbors_b, edges[:, 0], edges[:, 1])), sorted=True)
+
+    return neighbors, k_hop_neighborhood_edges

@@ -65,6 +65,11 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
         # Compute loss.
         out_pos = out[:batch_edges_pos.shape[0]]
         out_neg = out[batch_edges_pos.shape[0]:]
+        print("OUT_POS", out_pos.shape)
+        print("OUT_NEG", out_neg.shape)
+        print("batch_edges_pos.shape", batch_edges_pos.shape)
+        print("batch_edges.shape", batch_edges, batch_edges_pos.shape)
+
         loss = n_pair_loss(out_pos, out_neg)
         total_loss += loss.item() * len(batch_true)
 
@@ -125,6 +130,8 @@ def parse_args():
                         help='Random seed for training. Default is 1. ')
     parser.add_argument('--cuda', type=int, default=0,
                         help='Index of cuda device to use. Default is 0. ')
+    parser.add_argument('--batch-version', type=bool, default=False,
+                        help='Use the batch or full graph version. ')
 
     return parser.parse_args()
 
@@ -178,6 +185,7 @@ def main():
             'topological_heuristic_params': {
                 'scaling_parameter': args.scaling_parameter
             },
+            'batch_version': args.batch_version
         },
         'lr': args.lr,
         'epochs': args.epochs,
