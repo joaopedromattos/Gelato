@@ -69,7 +69,7 @@ class Gelato(torch.nn.Module):
         # standard format
         edges = edges.T
 
-        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(hops, edges, self.augmented_edges.T)
+        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(hops, edges, self.augmented_edges.T, device=self.A.device)
 
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
@@ -87,22 +87,13 @@ class Gelato(torch.nn.Module):
         W = W + W.t()
         W.fill_diagonal_(1)
 
-        # sparse_S = torch.sparse_coo_tensor(np.array(idx), self.S[idx][idx], (self.A.shape[0], self.A.shape[0]), device=self.A.device)
-        # sparse_A = 
-        sparse_S = self.S.to_sparse_coo()
-        sparse_A = self.A.to_sparse_coo()
-        sparse_untrained_similarity_edge_mask = self.untrained_similarity_edge_mask.to_sparse_coo()
+        A_enhanced = self.alpha * self.A + (1 - self.alpha) * (
+            (self.A + self.untrained_similarity_edge_mask) * ((1 - self.beta) * self.S + self.beta * W))
 
-        # if self.add_self_loop:
-        #     sparse_diagonal = torch.sparse_coo_tensor((range(A.shape[0]), range(A.shape[0])), [1 for i in range(A.shape[0])], device=self.A.device)
-
-        A_enhanced = self.alpha * sparse_A + (1 - self.alpha) * (
-            (sparse_A + sparse_untrained_similarity_edge_mask) * ((1 - self.beta) * sparse_S + self.beta * W))
-
-        # if self.add_self_loop:
-        #     A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
-        # else:
-        #     A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
+        if self.add_self_loop:
+            A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
+        else:
+            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
 
         print("A_enhanced", A_enhanced.shape)
         print("A", A.shape, type(A))
