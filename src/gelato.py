@@ -90,7 +90,7 @@ class Gelato(torch.nn.Module):
             idx.append([i, i])
             values.append(1)
 
-        W = torch.sparse_coo_tensor(np.array(idx).T, values,
+        W = torch.sparse_coo_tensor(torch.Tensor(idx), values,
                                     (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
         W = W + W.t()
 
