@@ -10,6 +10,8 @@ import util
 from gelato import Gelato
 from eval import valid
 
+import wandb
+
 
 def n_pair_loss(out_pos, out_neg):
     """
@@ -65,15 +67,13 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
         # Compute loss.
         out_pos = out[:batch_edges_pos.shape[0]]
         out_neg = out[batch_edges_pos.shape[0]:]
-        print("OUT_POS", out_pos.shape)
-        print("OUT_NEG", out_neg.shape)
-        print("batch_edges_pos.shape", batch_edges_pos.shape)
-        print("batch_edges.shape", batch_edges, batch_edges_pos.shape)
 
         loss = n_pair_loss(out_pos, out_neg)
         total_loss += loss.item() * len(batch_true)
 
         loss.backward()
+
+        wandb.log({"step_loss":loss})
 
         # Skipping the updating of nan gradients.
         nan_grad = False
@@ -192,11 +192,17 @@ def main():
         'train_batch_ratio': args.train_batch_ratio,
     }
 
+    wandb.init(project="gelato", entity="joaopedromattos")
+
+    wandb.config = hyperparameters
+
     # Training.
     util.set_random_seed(args.random_seed)
     model = Gelato(**hyperparameters['gelato']).to(device)
     parameters = list(model.parameters())
     optimizer = torch.optim.Adam(parameters, lr=hyperparameters['lr'])
+
+    wandb.watch(model)
 
     best_valid_prec = -1
     best_epoch = -1
@@ -216,6 +222,8 @@ def main():
 
         torch.save(model.state_dict(), results_folder + f'model_checkpoint{epoch}.pth')
         torch.save(optimizer.state_dict(), results_folder + f'optimizer_checkpoint{epoch}.pth')
+
+        wandb.log({"epoch_loss":loss})
 
     # Record the best model.
     with open(log_file, 'a') as f:

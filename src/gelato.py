@@ -214,7 +214,6 @@ class Autocovariance(torch.nn.Module):
     def forward(self, A, batch_idx=None):
 
         if batch_idx is not None:
-            print("Inside Autocovariance - A.shape", A.shape)
             A = A[batch_idx][:, batch_idx]
 
         # Compute Autocovariance matrix.
