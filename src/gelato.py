@@ -67,7 +67,7 @@ class Gelato(torch.nn.Module):
         # standard format
         edges = edges.T
 
-        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(hops, edges, self.augmented_edges.T)
+        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(hops, edges, self.augmented_edges.T, device=self.A.device)
 
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
@@ -94,7 +94,7 @@ class Gelato(torch.nn.Module):
                                     (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
         W = W + W.t()
 
-        A_enhanced = self.alpha * A + (1 - self.alpha) * ((A.to(bool) + self.untrained_similarity_edge_mask) * ((1 - self.beta) * self.S + self.beta * W))
+        A_enhanced = self.alpha * A.to_sparse_coo() + (1 - self.alpha) * ((A.to(bool).to_sparse_coo() + self.untrained_similarity_edge_mask.to_sparse_coo()) * ((1 - self.beta) * self.S.to_sparse_coo() + self.beta * W.to_sparse_coo()))
 
         if self.add_self_loop:
             A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
