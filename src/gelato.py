@@ -6,7 +6,7 @@ from tqdm import tqdm
 import numpy as np
 import util
 from torch_geometric.utils import k_hop_subgraph
-from torch_sparse import spspmm
+import torch_sparse
 
 
 class Gelato(torch.nn.Module):
@@ -90,13 +90,27 @@ class Gelato(torch.nn.Module):
             idx.append([i, i])
             values.append(1)
 
-        W = torch.sparse_coo_tensor(torch.Tensor(idx).T, values, (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
+        idx = torch.Tensor(idx)
+        values = torch.Tensor(values)
+
+        # W = torch.sparse_coo_tensor(torch.Tensor(idx).T, values, (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
+        W = torch_sparse.SparseTensor(row=idx[0], col=idx[1], value=values)
+        A = A.to_sparse_coo()
+        untrained_similarity_edge_mask = self.untrained_similarity_edge_mask.to_sparse_coo()
+        S = self.S.to_sparse_coo()
+
+        sparse_A = torch_sparse.SparseTensor(row=A.indices()[0], col=A.indices()[1], value=A.values())
+        sparse_untrained_similarity_edge_mask = torch_sparse.SparseTensor(
+            row=untrained_similarity_edge_mask.indices()[0], col=untrained_similarity_edge_mask.indices()[1], value=untrained_similarity_edge_mask.values())
+        sparse_S = torch_sparse.SparseTensor(
+            row=S.indices()[0], col=S.indices()[1], value=S.values())
+
         W = W + W.t()
 
-        A_enhanced = self.alpha * A.to_sparse_coo() + (1 - self.alpha) * ((A.to(bool).to_sparse_coo() + self.untrained_similarity_edge_mask.to_sparse_coo()) * ((1 - self.beta) * self.S.to_sparse_coo() + self.beta * W.to_sparse_coo()))
+        A_enhanced = self.alpha * sparse_A + (1 - self.alpha) * ((sparse_A + sparse_untrained_similarity_edge_mask) * ((1 - self.beta) * sparse_S + self.beta * W))
 
         if self.add_self_loop:
-            A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
+            torch_sparse.fill_diag(A_enhanced, 1)  # Add self-loop to all nodes.
         else:
             A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
 
