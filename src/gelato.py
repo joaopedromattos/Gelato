@@ -1,12 +1,14 @@
+from math import floor
+
+import numpy as np
 import torch
 import torch.nn.functional as F
-from math import floor
 from sklearn.metrics import pairwise_kernels
-from tqdm import tqdm
-import numpy as np
-import util
 from torch_geometric.utils import k_hop_subgraph
 from torch_sparse import spspmm
+from tqdm import tqdm
+
+import util
 
 
 class Gelato(torch.nn.Module):
@@ -85,12 +87,22 @@ class Gelato(torch.nn.Module):
         W = W + W.t()
         W.fill_diagonal_(1)
 
-        A_enhanced = self.alpha * A + (1 - self.alpha) * ((A.to(bool) + self.untrained_similarity_edge_mask) * ((1 - self.beta) * self.S + self.beta * W))
+        # sparse_S = torch.sparse_coo_tensor(np.array(idx), self.S[idx][idx], (self.A.shape[0], self.A.shape[0]), device=self.A.device)
+        # sparse_A = 
+        sparse_S = self.S.to_sparse_coo()
+        sparse_A = self.A.to_sparse_coo()
+        sparse_untrained_similarity_edge_mask = self.untrained_similarity_edge_mask.to_sparse_coo()
 
-        if self.add_self_loop:
-            A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
-        else:
-            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
+        # if self.add_self_loop:
+        #     sparse_diagonal = torch.sparse_coo_tensor((range(A.shape[0]), range(A.shape[0])), [1 for i in range(A.shape[0])], device=self.A.device)
+
+        A_enhanced = self.alpha * sparse_A + (1 - self.alpha) * (
+            (sparse_A + sparse_untrained_similarity_edge_mask) * ((1 - self.beta) * sparse_S + self.beta * W))
+
+        # if self.add_self_loop:
+        #     A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
+        # else:
+        #     A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
 
         print("A_enhanced", A_enhanced.shape)
         print("A", A.shape, type(A))

@@ -124,7 +124,7 @@ def compute_batches(rows, batch_size, shuffle=True):
     else:
         return torch.split(rows, batch_size)
 
-def compute_k_hop_neighborhood_edges(hops, edges, edge_index, relabel=False):
+def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", relabel=False):
     """
     Given an edge (or a set of edges), returns the edges and the nodes
     that constitute the k-hop subgraph around this edge.
@@ -136,9 +136,9 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, relabel=False):
     neighbors_a, edges_neighborhood_node_a, _, _ = k_hop_subgraph(node_idx=edges[0], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
     neighbors_b, edges_neighborhood_node_b, _, _ = k_hop_subgraph(node_idx=edges[1], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
 
-    k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node_a, edges_neighborhood_node_b, edges), axis=1), dim=1)
+    k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node_a.to(device), edges_neighborhood_node_b.to(device), edges), axis=1), dim=1)
 
     # Compute trained edge weights.
-    neighbors = torch.unique(torch.cat((neighbors_a, neighbors_b, edges[:, 0], edges[:, 1])), sorted=True)
+    neighbors = torch.unique(torch.cat((neighbors_a.to(device), neighbors_b.to(device), edges[:, 0], edges[:, 1])), sorted=True)
 
     return neighbors, k_hop_neighborhood_edges
