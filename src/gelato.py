@@ -90,8 +90,7 @@ class Gelato(torch.nn.Module):
             idx.append([i, i])
             values.append(1)
 
-        W = torch.sparse_coo_tensor(torch.Tensor(idx), values,
-                                    (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
+        W = torch.sparse_coo_tensor(torch.Tensor(idx).T, values, (self.A.shape[0], self.A.shape[0]), device=self.A.device, requires_grad=True)
         W = W + W.t()
 
         A_enhanced = self.alpha * A.to_sparse_coo() + (1 - self.alpha) * ((A.to(bool).to_sparse_coo() + self.untrained_similarity_edge_mask.to_sparse_coo()) * ((1 - self.beta) * self.S.to_sparse_coo() + self.beta * W.to_sparse_coo()))
