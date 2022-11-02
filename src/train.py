@@ -192,9 +192,7 @@ def main():
         'train_batch_ratio': args.train_batch_ratio,
     }
 
-    wandb.init(project="gelato", entity="joaopedromattos")
-
-    wandb.config = hyperparameters
+    wandb.init(project="gelato", entity="joaopedromattos", config=hyperparameters)
 
     # Training.
     util.set_random_seed(args.random_seed)
