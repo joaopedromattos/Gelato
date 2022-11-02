@@ -73,7 +73,7 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
 
         loss.backward()
 
-        wandb.log({"step_loss":loss})
+        # wandb.log({"step_loss": loss/len(batch_edges)})
 
         # Skipping the updating of nan gradients.
         nan_grad = False

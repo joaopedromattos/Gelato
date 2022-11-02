@@ -50,16 +50,22 @@ class Gelato(torch.nn.Module):
             num_edges = (self.A != 0).sum()
             num_untrained_similarity_edges = floor(num_edges * self.eta)
             np.fill_diagonal(S, 0)
-            threshold = np.partition(S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
-            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(S > threshold), persistent=False)
+            threshold = np.partition(
+                S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
+            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
+                S > threshold), persistent=False)
         else:
-            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(np.zeros_like(S)), persistent=False)
-        
-        augmented_edge_mask = self.A.to(bool) + self.untrained_similarity_edge_mask
-        self.register_buffer('S', torch.relu(torch.FloatTensor(S) * augmented_edge_mask), persistent=False)
+            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
+                np.zeros_like(S)), persistent=False)
+
+        augmented_edge_mask = self.A.to(
+            bool) + self.untrained_similarity_edge_mask
+        self.register_buffer('S', torch.relu(torch.FloatTensor(
+            S) * augmented_edge_mask), persistent=False)
         self.augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
 
-        self.augmented_edge_loader = util.compute_batches(self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
+        self.augmented_edge_loader = util.compute_batches(
+            self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
     def forward_batched(self, edges, edges_pos=None):
         hops = self.topological_heuristic_params["scaling_parameter"]
@@ -69,13 +75,18 @@ class Gelato(torch.nn.Module):
         # standard format
         edges = edges.T
 
-        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(hops, edges, self.augmented_edges.T, device=self.A.device)
-
+        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
+            hops, edges, self.augmented_edges.T, device=self.A.device)
+        #print(f"\n\n\n For the current batch (size {edges.shape}), we have ", len(neighbors), "neighbors and", k_hop_neighborhood_edges.shape, "edges")
+        #print(edges.T)
+        #print(neighbors)
+        #print(k_hop_neighborhood_edges.shape)
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
         # Positive masking.
-        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
+        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(
+            edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
         # Compute trained edge weights.
         W = torch.zeros(
@@ -93,28 +104,32 @@ class Gelato(torch.nn.Module):
         if self.add_self_loop:
             A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
         else:
-            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
+            # Add self-loops to isolated nodes.
+            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)
 
-        print("A_enhanced", A_enhanced.shape)
+        # print("A_enhanced", A_enhanced.shape)
         print("A", A.shape, type(A))
         R = self.topological_heuristic(A_enhanced, neighbors)
 
-        neighborhood_idx = {neighbor:idx for idx, neighbor in enumerate(neighbors.tolist())}
+        neighborhood_idx = {neighbor: idx for idx,
+                            neighbor in enumerate(neighbors.tolist())}
         print("edges.shape", edges.shape)
-        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [neighborhood_idx[edge] for edge in edges[1].tolist()])
+        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
+                               neighborhood_idx[edge] for edge in edges[1].tolist()])
         # print("Edges converted", edges)
         out = R[edges_idx_converted]
         print("Autocov with neighbors - shape", R.shape)
-        print(R)
+        # print(R)
         return out
-
 
     def forward_full(self, edges, edges_pos=None):
         # Positive masking.
-        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(edges_pos.shape[0], device=self.A.device)) if self.training else self.A
+        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(
+            edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
         # Compute trained edge weights.
-        W = torch.zeros((self.A.shape[0], self.A.shape[0]), device=self.A.device)
+        W = torch.zeros(
+            (self.A.shape[0], self.A.shape[0]), device=self.A.device)
 
         for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc='Compute trained weights', total=len(self.augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
@@ -123,18 +138,19 @@ class Gelato(torch.nn.Module):
         W.fill_diagonal_(1)
 
         # Combine topological edge weights, trained edge weights, and untrained edge weights.
-        A_enhanced = self.alpha * A + (1 - self.alpha) * ((A.to(bool) + self.untrained_similarity_edge_mask) * (self.beta * W + (1 - self.beta) * self.S))
+        A_enhanced = self.alpha * A + (1 - self.alpha) * (
+            (A.to(bool) + self.untrained_similarity_edge_mask) * (self.beta * W + (1 - self.beta) * self.S))
         if self.add_self_loop:
             A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
         else:
-            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)  # Add self-loops to isolated nodes.
+            # Add self-loops to isolated nodes.
+            A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)
 
         R = self.topological_heuristic(A_enhanced)
         out = R[tuple(edges.t())]
         print("tuple(edges.t())", tuple(edges.t()))
 
         return out
-
 
     def forward(self, edges, edges_pos=None):
 
@@ -192,13 +208,15 @@ class PairwiseMLP(torch.nn.Module):
     def __init__(self, in_channels, hidden_channels, out_channels, num_layers, dropout, relu_first, batch_norm, permutation_invariant):
 
         super(PairwiseMLP, self).__init__()
-        self.mlp = MLP(in_channels, hidden_channels, out_channels, num_layers, dropout, relu_first, batch_norm)
+        self.mlp = MLP(in_channels, hidden_channels, out_channels,
+                       num_layers, dropout, relu_first, batch_norm)
         self.permutation_invariant = permutation_invariant
 
     def forward(self, x, edges):
 
         if self.permutation_invariant:
-            edge_x = torch.cat([x[edges[:, 0]] + x[edges[:, 1]], torch.abs(x[edges[:, 0]] - x[edges[:, 1]])], dim=1)
+            edge_x = torch.cat([x[edges[:, 0]] + x[edges[:, 1]],
+                               torch.abs(x[edges[:, 0]] - x[edges[:, 1]])], dim=1)
         else:
             edge_x = torch.cat([x[edges[:, 0]], x[edges[:, 1]]], dim=1)
 
@@ -220,12 +238,14 @@ class Autocovariance(torch.nn.Module):
         d = A.sum(dim=1)
         pi = F.normalize(d, p=1, dim=0)
         M = A / d[:, None]
-        R = torch.diag(pi) @ torch.matrix_power(M, self.scaling_parameter) - torch.outer(pi, pi)
+        R = torch.diag(pi) @ torch.matrix_power(M,
+                                                self.scaling_parameter) - torch.outer(pi, pi)
 
         # Standardize Autocovariance entries.
         R = (R - R.mean())/R.std()
 
         return R
+
 
 class EdgeDataset(torch.utils.data.Dataset):
     def __init__(self, edges):
