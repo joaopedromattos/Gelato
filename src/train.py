@@ -199,7 +199,6 @@ def main():
     model = Gelato(**hyperparameters['gelato']).to(device)
     parameters = list(model.parameters())
     optimizer = torch.optim.Adam(parameters, lr=hyperparameters['lr'])
-
     wandb.watch(model)
 
     best_valid_prec = -1

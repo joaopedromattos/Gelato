@@ -92,7 +92,7 @@ class Gelato(torch.nn.Module):
         W = torch.zeros(
             (self.A.shape[0], self.A.shape[0]), device=self.A.device)
 
-        for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc='Compute trained weights', total=len(self.augmented_edge_loader))):
+        for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(self.augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
             W[tuple(batch.t())] = out
         W = W + W.t()
@@ -108,17 +108,17 @@ class Gelato(torch.nn.Module):
             A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)
 
         # print("A_enhanced", A_enhanced.shape)
-        print("A", A.shape, type(A))
+        # print("A", A.shape, type(A))
         R = self.topological_heuristic(A_enhanced, neighbors)
 
         neighborhood_idx = {neighbor: idx for idx,
                             neighbor in enumerate(neighbors.tolist())}
-        print("edges.shape", edges.shape)
+        # print("edges.shape", edges.shape)
         edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
                                neighborhood_idx[edge] for edge in edges[1].tolist()])
         # print("Edges converted", edges)
         out = R[edges_idx_converted]
-        print("Autocov with neighbors - shape", R.shape)
+        # print("Autocov with neighbors - shape", R.shape)
         # print(R)
         return out
 
