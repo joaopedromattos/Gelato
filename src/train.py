@@ -132,6 +132,8 @@ def parse_args():
                         help='Index of cuda device to use. Default is 0. ')
     parser.add_argument('--batch-version', type=bool, default=False,
                         help='Use the batch or full graph version. ')
+    parser.add_argument('--max-neighborhood-size', type=int, default=10_000,
+                        help='Only used in the batch version. Defines the maximum amount of neighbors to be sampled in a batch.')
 
     return parser.parse_args()
 
@@ -185,7 +187,8 @@ def main():
             'topological_heuristic_params': {
                 'scaling_parameter': args.scaling_parameter
             },
-            'batch_version': args.batch_version
+            'batch_version': args.batch_version,
+            'max_neighborhood_size': args.max_neighborhood_size
         },
         'lr': args.lr,
         'epochs': args.epochs,
@@ -193,6 +196,9 @@ def main():
     }
 
     wandb.init(project="gelato", entity="joaopedromattos", config=args)
+
+    batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
+    wandb.run.name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
 
     # Training.
     util.set_random_seed(args.random_seed)
@@ -214,6 +220,10 @@ def main():
             print(f"Epoch = {epoch}:", file=f)
             print(f"Loss = {loss:.4e}", file=f)
             print(f"Valid precision@100%: {valid_prec:.2%}", file=f)
+
+        wandb.log({"val_epoch_loss":loss})
+        wandb.log({"val_precision_@_100%":valid_prec})
+
         if valid_prec > best_valid_prec:
             best_epoch = epoch
             best_valid_prec = valid_prec

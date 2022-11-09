@@ -15,7 +15,7 @@ class Gelato(torch.nn.Module):
 
     def __init__(self, A, X, eta, alpha, beta, add_self_loop, trained_edge_weight_batch_size,
                  graph_learning_type, graph_learning_params,
-                 topological_heuristic_type, topological_heuristic_params, batch_version
+                 topological_heuristic_type, topological_heuristic_params, batch_version, max_neighborhood_size
                  ):
         super(Gelato, self).__init__()
 
@@ -29,6 +29,7 @@ class Gelato(torch.nn.Module):
         self.add_self_loop = add_self_loop
         self.trained_edge_weight_batch_size = trained_edge_weight_batch_size
         self.batch_version = batch_version
+        self.max_neighborhood_size = max_neighborhood_size
 
         # Graph learning and topological heuristic components.
         self.graph_learning_type = graph_learning_type
