@@ -1,8 +1,10 @@
 import torch
 import numpy as np
 import random
+from torch.utils.data import DataLoader, Dataset
 from torch_geometric.datasets import Planetoid, Amazon
 from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges, k_hop_subgraph
+from tqdm import tqdm
 
 
 def set_random_seed(random_seed):
@@ -133,12 +135,60 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
     hops (int) -> Number of hops to create the neighborhood
     edges ()
     """
+
     neighbors_a, edges_neighborhood_node_a, _, _ = k_hop_subgraph(node_idx=edges[0], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
     neighbors_b, edges_neighborhood_node_b, _, _ = k_hop_subgraph(node_idx=edges[1], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
 
     k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node_a.to(device), edges_neighborhood_node_b.to(device), edges), axis=1), dim=1)
 
-    # Compute trained edge weights.
     neighbors = torch.unique(torch.cat((neighbors_a.to(device), neighbors_b.to(device), edges[:, 0], edges[:, 1])), sorted=True)
 
     return neighbors, k_hop_neighborhood_edges
+
+
+def compute_k_hop_neighborhood_from_nodes(hops, nodes, edge_index, device="cpu", relabel=False):
+    """
+    Given a node (or a set of nodes), returns the the nodes and edges
+    that constitute the k-hop subgraph around this node.
+
+    Params:
+    hops (int) -> Number of hops to create the neighborhood
+    edges ()
+    """
+
+    neighbors, k_hop_neighborhood_edges, _, _ = k_hop_subgraph(node_idx=nodes, num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+
+    return neighbors, k_hop_neighborhood_edges
+
+
+def preprocess_k_hop_neigborhoods(A, hops):
+    """
+    Given a network (A) and a number of hops,
+    this function returns the k-hop neighborhood that surrounds
+    every node in A.
+    """
+    k_hop_neighborhoods = {}
+
+    # Preprocessing our neighborhoods
+    for node in tqdm(range(A.shape[0]), desc="Preprocessing neighborhoods..."):
+        k_hop_neighborhoods[node] = {}
+        k_hop_neighborhoods[node]["neighbors"], k_hop_neighborhoods[node]["k_hop_neighborhood_edges"] = compute_k_hop_neighborhood_from_nodes(
+            hops, node, torch.nonzero(A).T, A.device, False)
+
+    return k_hop_neighborhoods
+
+
+class EdgesDataset(Dataset):
+    def __init__(self, edges_pos, edges_neg, preprocessed_k_hop_neighoods):
+        self.edges_pos = edges_pos
+        self.edges_neg = edges_neg
+        self.preprocessed_k_hop_neighoods = preprocessed_k_hop_neighoods
+
+    def __len__(self):
+        return len(self.edges_neg) + len(self.edges_pos)
+
+    def __getitem__(self, idx):
+        if (self.preprocessed_k_hop_neighoods):
+            return self.edges_pos[idx], self.edges_neg[idx], self.preprocessed_k_hop_neighoods[idx]["neighbors"], self.preprocessed_k_hop_neighoods[idx]["k_hop_neighborhood_edges"]
+        else:
+            return self.edges_pos[idx], self.edges_neg[idx], None, None

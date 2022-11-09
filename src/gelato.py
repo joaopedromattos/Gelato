@@ -15,7 +15,8 @@ class Gelato(torch.nn.Module):
 
     def __init__(self, A, X, eta, alpha, beta, add_self_loop, trained_edge_weight_batch_size,
                  graph_learning_type, graph_learning_params,
-                 topological_heuristic_type, topological_heuristic_params, batch_version
+                 topological_heuristic_type, topological_heuristic_params, batch_version,
+                 pre_computed_neighborhoods
                  ):
         super(Gelato, self).__init__()
 
@@ -29,6 +30,7 @@ class Gelato(torch.nn.Module):
         self.add_self_loop = add_self_loop
         self.trained_edge_weight_batch_size = trained_edge_weight_batch_size
         self.batch_version = batch_version
+        self.pre_computed_neighborhoods = pre_computed_neighborhoods
 
         # Graph learning and topological heuristic components.
         self.graph_learning_type = graph_learning_type
@@ -77,10 +79,7 @@ class Gelato(torch.nn.Module):
 
         neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
             hops, edges, self.augmented_edges.T, device=self.A.device)
-        #print(f"\n\n\n For the current batch (size {edges.shape}), we have ", len(neighbors), "neighbors and", k_hop_neighborhood_edges.shape, "edges")
-        #print(edges.T)
-        #print(neighbors)
-        #print(k_hop_neighborhood_edges.shape)
+
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
@@ -107,19 +106,15 @@ class Gelato(torch.nn.Module):
             # Add self-loops to isolated nodes.
             A_enhanced.diagonal().copy_(A_enhanced.sum(axis=1) == 0)
 
-        # print("A_enhanced", A_enhanced.shape)
-        # print("A", A.shape, type(A))
         R = self.topological_heuristic(A_enhanced, neighbors)
 
         neighborhood_idx = {neighbor: idx for idx,
                             neighbor in enumerate(neighbors.tolist())}
-        # print("edges.shape", edges.shape)
+
         edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
                                neighborhood_idx[edge] for edge in edges[1].tolist()])
-        # print("Edges converted", edges)
         out = R[edges_idx_converted]
-        # print("Autocov with neighbors - shape", R.shape)
-        # print(R)
+
         return out
 
     def forward_full(self, edges, edges_pos=None):
@@ -245,15 +240,3 @@ class Autocovariance(torch.nn.Module):
         R = (R - R.mean())/R.std()
 
         return R
-
-
-class EdgeDataset(torch.utils.data.Dataset):
-    def __init__(self, edges):
-        self.edges = edges[torch.randperm(edges.shape[0])]
-        self.len = len(edges)
-
-    def __len__(self):
-        return self.len
-
-    def __getitem__(self, idx):
-        return self.edges[idx]
