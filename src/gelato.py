@@ -15,8 +15,7 @@ class Gelato(torch.nn.Module):
 
     def __init__(self, A, X, eta, alpha, beta, add_self_loop, trained_edge_weight_batch_size,
                  graph_learning_type, graph_learning_params,
-                 topological_heuristic_type, topological_heuristic_params, batch_version,
-                 pre_computed_neighborhoods
+                 topological_heuristic_type, topological_heuristic_params, batch_version
                  ):
         super(Gelato, self).__init__()
 
@@ -30,7 +29,6 @@ class Gelato(torch.nn.Module):
         self.add_self_loop = add_self_loop
         self.trained_edge_weight_batch_size = trained_edge_weight_batch_size
         self.batch_version = batch_version
-        self.pre_computed_neighborhoods = pre_computed_neighborhoods
 
         # Graph learning and topological heuristic components.
         self.graph_learning_type = graph_learning_type
@@ -69,16 +67,36 @@ class Gelato(torch.nn.Module):
         self.augmented_edge_loader = util.compute_batches(
             self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
+
+        # Preprocesses the neighborhoods of our graph based on the AUGMENTED EDGES.
+        # The intuition behind this is to incorporate attribute information in the
+        # batched version of our model. It would be unfair to compare both models without
+        # this information.
+        self.pre_computed_neighborhoods = util.preprocess_k_hop_neigborhoods(
+            self.A, self.topological_heuristic_params["scaling_parameter"]) if self.batch_version else None
+
+    def _get_pre_computed_neighborhoods(self, edges, max_neighbors=None):
+        neighbors = torch.Tensor()
+        k_hop_neighborhood_edges = torch.Tensor()
+
+        for node_a, node_b in edges:
+            neighborhood_node_a = self.pre_computed_neighborhoods[int(node_a)]["neighbors"]
+            neighborhood_node_b = self.pre_computed_neighborhoods[int(node_b)]["neighbors"]
+            neighbors = torch.cat((neighbors, neighborhood_node_a, neighborhood_node_b))
+
+            k_hop_neighborhood_edges_node_a = self.pre_computed_neighborhoods[int(node_a)]["k_hop_neighborhood_edges"]
+            k_hop_neighborhood_edges_node_b = self.pre_computed_neighborhoods[int(node_b)]["k_hop_neighborhood_edges"]
+            k_hop_neighborhood_edges = torch.cat((k_hop_neighborhood_edges, k_hop_neighborhood_edges_node_a, k_hop_neighborhood_edges_node_b), axis=1)            
+
+        return torch.unique(neighbors).long().to(self.A.device), torch.unique(k_hop_neighborhood_edges, dim=1).long().to(self.A.device)
+
     def forward_batched(self, edges, edges_pos=None):
-        hops = self.topological_heuristic_params["scaling_parameter"]
+        print("Edges shape", edges.shape)
+        neighbors, k_hop_neighborhood_edges = self._get_pre_computed_neighborhoods(edges)
+        
 
-        # We are going to use PyG functions
-        # so here we convert our edges to the
-        # standard format
-        edges = edges.T
-
-        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges, self.augmented_edges.T, device=self.A.device)
+        print("Neighbors", neighbors.shape)
+        print("k_hop_neighborhood_edges", k_hop_neighborhood_edges.shape)
 
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
@@ -91,9 +109,13 @@ class Gelato(torch.nn.Module):
         W = torch.zeros(
             (self.A.shape[0], self.A.shape[0]), device=self.A.device)
 
+        print("SHAPE A", A.shape)
+
         for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(self.augmented_edge_loader))):
+            print("Batch", batch.shape)
             out = self.graph_learning(self.X, batch.to(self.A.device))
             W[tuple(batch.t())] = out
+
         W = W + W.t()
         W.fill_diagonal_(1)
 
@@ -108,11 +130,14 @@ class Gelato(torch.nn.Module):
 
         R = self.topological_heuristic(A_enhanced, neighbors)
 
+        print("Shape R", R.shape)
+
         neighborhood_idx = {neighbor: idx for idx,
                             neighbor in enumerate(neighbors.tolist())}
 
-        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
-                               neighborhood_idx[edge] for edge in edges[1].tolist()])
+        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[:, 0].tolist()], [
+                               neighborhood_idx[edge] for edge in edges[:, 1].tolist()])
+        # print("Edges idx converted", edges_idx_converted)
         out = R[edges_idx_converted]
 
         return out

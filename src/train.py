@@ -55,9 +55,7 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
 
     total_loss = 0
     edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(len(train_edges_pos)*train_batch_ratio), shuffle=True)
-    edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)
-    # DataLoader(util.EdgesDataset(train_edges_pos, train_edges_neg, ))
-    
+    edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)    
 
     for batch_edges_pos, batch_edges_neg in tqdm(zip(edges_pos_loader, edges_neg_loader), desc='Train Batch', total=len(edges_pos_loader)):
 
@@ -190,14 +188,13 @@ def main():
                 'scaling_parameter': args.scaling_parameter
             },
             'batch_version': args.batch_version,
-            'pre_computed_neighborhoods': util.preprocess_k_hop_neigborhoods(A, args.scaling_parameter) if args.batch_version else None
         },
         'lr': args.lr,
         'epochs': args.epochs,
         'train_batch_ratio': args.train_batch_ratio,
     }
 
-    quit()
+    # quit()
 
     wandb.init(project="gelato", entity="joaopedromattos", config=args)
 
