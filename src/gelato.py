@@ -77,9 +77,9 @@ class Gelato(torch.nn.Module):
         edges = edges.T
 
         neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges, self.augmented_edges.T, device=self.A.device)
+            hops, edges, self.augmented_edges.T, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size)
         #print(f"\n\n\n For the current batch (size {edges.shape}), we have ", len(neighbors), "neighbors and", k_hop_neighborhood_edges.shape, "edges")
-        #print(edges.T)
+        print("Edges", edges.shape)
         #print(neighbors)
         #print(k_hop_neighborhood_edges.shape)
         self.augmented_edge_loader = util.compute_batches(
@@ -114,6 +114,8 @@ class Gelato(torch.nn.Module):
 
         neighborhood_idx = {neighbor: idx for idx,
                             neighbor in enumerate(neighbors.tolist())}
+        # print(neighborhood_idx)
+        # print(2139 in neighborhood_idx)
         # print("edges.shape", edges.shape)
         edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
                                neighborhood_idx[edge] for edge in edges[1].tolist()])

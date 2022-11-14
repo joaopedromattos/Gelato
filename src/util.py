@@ -3,6 +3,7 @@ import numpy as np
 import random
 from torch_geometric.datasets import Planetoid, Amazon
 from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges, k_hop_subgraph
+from tqdm import tqdm
 
 
 def set_random_seed(random_seed):
@@ -124,7 +125,7 @@ def compute_batches(rows, batch_size, shuffle=True):
     else:
         return torch.split(rows, batch_size)
 
-def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", relabel=False):
+def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", relabel=False, max_neighborhood_size=None):
     """
     Given an edge (or a set of edges), returns the edges and the nodes
     that constitute the k-hop subgraph around this edge.
@@ -133,12 +134,30 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
     hops (int) -> Number of hops to create the neighborhood
     edges ()
     """
-    neighbors_a, edges_neighborhood_node_a, _, _ = k_hop_subgraph(node_idx=edges[0], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
-    neighbors_b, edges_neighborhood_node_b, _, _ = k_hop_subgraph(node_idx=edges[1], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+    # print("Max neigh size", max_neighborhood_size)
 
-    k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node_a.to(device), edges_neighborhood_node_b.to(device), edges), axis=1), dim=1)
-
+    neighbors, edges_neighborhood_node, _, _ = k_hop_subgraph(node_idx=edges.flatten(), num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+    
     # Compute trained edge weights.
-    neighbors = torch.unique(torch.cat((neighbors_a.to(device), neighbors_b.to(device), edges[:, 0], edges[:, 1])), sorted=True)
+    if (max_neighborhood_size and (max_neighborhood_size < len(neighbors))):
+        # print("Inside the if")
+        indices = random.sample(range(len(neighbors)), int(max_neighborhood_size/2))
+        indices = torch.tensor(indices)
+        neighbors = neighbors[indices]
 
+        neighbors = torch.unique(torch.cat((neighbors.to(device), edges.flatten())), sorted=True)
+
+        mask = []
+        for idx, edge in enumerate(edges_neighborhood_node.T):
+            if (edge[0] in neighbors) and (edge[1] in neighbors):
+                mask.append(idx)
+
+        edges_neighborhood_node = edges_neighborhood_node[:, torch.tensor(mask)]
+
+        # print(edges_neighborhood_node.shape)
+        # print(mask)
+        k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node.to(device), edges), axis=1), dim=1)
+
+    # print("New neighborhood size", neighbors.shape)
+    # print("New edges size", k_hop_neighborhood_edges.shape)
     return neighbors, k_hop_neighborhood_edges

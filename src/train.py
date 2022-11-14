@@ -195,10 +195,10 @@ def main():
         'train_batch_ratio': args.train_batch_ratio,
     }
 
-    wandb.init(project="gelato", entity="joaopedromattos", config=args)
-
     batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
-    wandb.run.name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
+    run_name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
+
+    wandb.init(project="gelato", entity="joaopedromattos", config=args, name=run_name)
 
     # Training.
     util.set_random_seed(args.random_seed)
