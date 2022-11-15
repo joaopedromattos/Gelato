@@ -125,6 +125,8 @@ def compute_batches(rows, batch_size, shuffle=True):
     else:
         return torch.split(rows, batch_size)
 
+
+
 def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", relabel=False, max_neighborhood_size=None):
     """
     Given an edge (or a set of edges), returns the edges and the nodes
@@ -136,14 +138,14 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
     """
     # print("Max neigh size", max_neighborhood_size)
 
-    neighbors, edges_neighborhood_node, _, _ = k_hop_subgraph(node_idx=edges.flatten(), num_hops=hops, edge_index=edge_index, relabel_nodes=False)
+    neighbors, edges_neighborhood_node, mapping, _ = k_hop_subgraph(node_idx=edges.flatten(), num_hops=hops, edge_index=edge_index, relabel_nodes=relabel)
     
     # Compute trained edge weights.
     if (max_neighborhood_size and (max_neighborhood_size < len(neighbors))):
-        # print("Inside the if")
-        indices = random.sample(range(len(neighbors)), int(max_neighborhood_size/2))
+        indices = random.sample(range(len(neighbors)), int(max_neighborhood_size))
         indices = torch.tensor(indices)
         neighbors = neighbors[indices]
+        print("Neighbors", len(neighbors))
 
         neighbors = torch.unique(torch.cat((neighbors.to(device), edges.flatten())), sorted=True)
 
@@ -156,8 +158,9 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
 
         # print(edges_neighborhood_node.shape)
         # print(mask)
-        k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node.to(device), edges), axis=1), dim=1)
+        edges_neighborhood_node = torch.unique(torch.cat((edges_neighborhood_node.to(device), edges), axis=1), dim=1)
+
 
     # print("New neighborhood size", neighbors.shape)
     # print("New edges size", k_hop_neighborhood_edges.shape)
-    return neighbors, k_hop_neighborhood_edges
+    return neighbors, edges_neighborhood_node

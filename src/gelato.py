@@ -46,6 +46,8 @@ class Gelato(torch.nn.Module):
         }[topological_heuristic_type](**topological_heuristic_params)
 
         # Compute untrained edge weights and the augmented edges.
+        # TODO => I think this should be computed in execution time, 
+        # otherwise we're storing a huge NxN matrix
         S = pairwise_kernels(self.X, metric='cosine')
         if self.eta != 0.0:
             num_edges = (self.A != 0).sum()
@@ -76,12 +78,25 @@ class Gelato(torch.nn.Module):
         # standard format
         edges = edges.T
 
+
         neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges, self.augmented_edges.T, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size)
-        #print(f"\n\n\n For the current batch (size {edges.shape}), we have ", len(neighbors), "neighbors and", k_hop_neighborhood_edges.shape, "edges")
-        print("Edges", edges.shape)
-        #print(neighbors)
-        #print(k_hop_neighborhood_edges.shape)
+            hops, edges, self.augmented_edges.T, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
+
+        # Hash creation
+        # This will be used to reduce the size of all tensors used in the
+        # computation of the autocovatiance
+        neighborhood_idx = {neighbor: idx for idx,
+                            neighbor in enumerate(neighbors.tolist())}
+        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
+                               neighborhood_idx[edge] for edge in edges[1].tolist()])
+        k_hop_neighborhood_edges = torch.Tensor(([neighborhood_idx[edge] for edge in k_hop_neighborhood_edges[0].tolist()], [
+                               neighborhood_idx[edge] for edge in k_hop_neighborhood_edges[1].tolist()]), device=k_hop_neighborhood_edges.device).long()
+        # print(k_hop_neighborhood_edges)
+
+        # print("Edges stats", edges.shape, "max", max(edges_idx_converted))
+        print("k_hop_neighborhood_edges", k_hop_neighborhood_edges.shape, "max", max(k_hop_neighborhood_edges.flatten()), "max", min(k_hop_neighborhood_edges.flatten()))
+        print("Neighbors stats - max", max(neighborhood_idx.keys()), 'min', min(neighborhood_idx.keys()), 'len', len(neighbors))
+
         self.augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
@@ -89,18 +104,26 @@ class Gelato(torch.nn.Module):
         A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(
             edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
-        # Compute trained edge weights.
-        W = torch.zeros(
-            (self.A.shape[0], self.A.shape[0]), device=self.A.device)
+        A = A[neighbors][:, neighbors]
+        untrained_similarity_edge_mask = self.untrained_similarity_edge_mask[neighbors][:, neighbors]
+        S = self.S[neighbors][:, neighbors] # TODO => THIS WILL BE COMPUTED IN EXECUTION TIME IN THE FUTURE
 
+        print("A.shape", A.shape)
+        print("untrained_similarity_edge_mask.shape", untrained_similarity_edge_mask.shape)
+        print("S.shape", S.shape)
+
+        # Compute trained edge weights.
+        W = torch.zeros((len(neighbors), len(neighbors)), device=self.A.device)
+
+        print("W.shape", W.shape)
         for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(self.augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
             W[tuple(batch.t())] = out
         W = W + W.t()
         W.fill_diagonal_(1)
 
-        A_enhanced = self.alpha * self.A + (1 - self.alpha) * (
-            (self.A + self.untrained_similarity_edge_mask) * ((1 - self.beta) * self.S + self.beta * W))
+        A_enhanced = self.alpha * A + (1 - self.alpha) * (
+            (A + untrained_similarity_edge_mask) * ((1 - self.beta) * S + self.beta * W))
 
         if self.add_self_loop:
             A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.
@@ -110,15 +133,8 @@ class Gelato(torch.nn.Module):
 
         # print("A_enhanced", A_enhanced.shape)
         # print("A", A.shape, type(A))
-        R = self.topological_heuristic(A_enhanced, neighbors)
+        R = self.topological_heuristic(A_enhanced)
 
-        neighborhood_idx = {neighbor: idx for idx,
-                            neighbor in enumerate(neighbors.tolist())}
-        # print(neighborhood_idx)
-        # print(2139 in neighborhood_idx)
-        # print("edges.shape", edges.shape)
-        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
-                               neighborhood_idx[edge] for edge in edges[1].tolist()])
         # print("Edges converted", edges)
         out = R[edges_idx_converted]
         # print("Autocov with neighbors - shape", R.shape)
@@ -232,10 +248,7 @@ class Autocovariance(torch.nn.Module):
         super(Autocovariance, self).__init__()
         self.scaling_parameter = scaling_parameter
 
-    def forward(self, A, batch_idx=None):
-
-        if batch_idx is not None:
-            A = A[batch_idx][:, batch_idx]
+    def forward(self, A):
 
         # Compute Autocovariance matrix.
         d = A.sum(dim=1)
