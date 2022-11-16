@@ -11,6 +11,7 @@ from tqdm import tqdm
 import util
 
 
+
 class Gelato(torch.nn.Module):
 
     def __init__(self, A, X, eta, alpha, beta, add_self_loop, trained_edge_weight_batch_size,
@@ -69,6 +70,7 @@ class Gelato(torch.nn.Module):
 
         self.augmented_edge_loader = util.compute_batches(
             self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
+
 
     def forward_batched(self, edges, edges_pos=None):
         hops = self.topological_heuristic_params["scaling_parameter"]

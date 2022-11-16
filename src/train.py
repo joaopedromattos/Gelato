@@ -13,6 +13,8 @@ from eval import valid
 import wandb
 
 
+
+
 def n_pair_loss(out_pos, out_neg):
     """
     Compute the N-pair loss.
