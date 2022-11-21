@@ -116,14 +116,13 @@ class Gelato(torch.nn.Module):
         # untrained_similarity_edge_mask in execution time,
         # which prevents us from storing an NxN matrix in RAM
         # all the time. 
-        # S = X @ X.T # Cosine similarity 
-        S = torch.tensor(pairwise_kernels(X.cpu(), metric='cosine'), device=self.X.device)
+        S = X @ X.T # Cosine similarity
         if self.eta != 0.0:
             num_edges = (A != 0).sum()
             num_untrained_similarity_edges = floor(num_edges * self.eta)
-            np.fill_diagonal(S, 0)
-            threshold = np.partition(
-                S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
+            S.fill_diagonal_(0)
+            sorted_S = torch.sort(S.flatten())[0]
+            threshold = sorted_S[-num_untrained_similarity_edges]
             untrained_similarity_edge_mask = (S > threshold).bool()
         else:
             untrained_similarity_edge_mask = torch.zeros_like(S).bool()
@@ -142,14 +141,14 @@ class Gelato(torch.nn.Module):
         W = torch.zeros((len(neighbors), len(neighbors)), device=self.A.device)
 
         print("W.shape", W.shape)
-        for i, batch in enumerate(tqdm(augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(augmented_edge_loader))):
-            out = self.graph_learning(self.X, batch.to(self.A.device))
-            W[tuple(batch.t())] = out
+    
+        out = self.graph_learning(self.X, augmented_edges)
+        W[tuple(augmented_edges.t())] = out
         W = W + W.t()
         W.fill_diagonal_(1)
 
         A_enhanced = self.alpha * A + (1 - self.alpha) * (
-            (A + untrained_similarity_edge_mask) * ((1 - self.beta) * S + self.beta * W))
+            (A.to(bool) + untrained_similarity_edge_mask) * (self.beta * W + (1 - self.beta) * S))
 
         if self.add_self_loop:
             A_enhanced.fill_diagonal_(1)  # Add self-loop to all nodes.

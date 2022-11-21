@@ -12,7 +12,7 @@ from eval import valid
 
 import wandb
 
-from scalene import scalene_profiler
+# from scalene import scalene_profiler
 
 
 
