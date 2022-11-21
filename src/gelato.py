@@ -9,13 +9,15 @@ from torch_sparse import spspmm
 from tqdm import tqdm
 
 import util
+import random
 
 
 class Gelato(torch.nn.Module):
 
     def __init__(self, A, X, eta, alpha, beta, add_self_loop, trained_edge_weight_batch_size,
                  graph_learning_type, graph_learning_params,
-                 topological_heuristic_type, topological_heuristic_params, batch_version
+                 topological_heuristic_type, topological_heuristic_params, batch_version,
+                 max_neighborhood_size, all_edges
                  ):
         super(Gelato, self).__init__()
 
@@ -29,6 +31,7 @@ class Gelato(torch.nn.Module):
         self.add_self_loop = add_self_loop
         self.trained_edge_weight_batch_size = trained_edge_weight_batch_size
         self.batch_version = batch_version
+        self.max_neighborhood_size = max_neighborhood_size
 
         # Graph learning and topological heuristic components.
         self.graph_learning_type = graph_learning_type
@@ -73,9 +76,9 @@ class Gelato(torch.nn.Module):
         # batched version of our model. It would be unfair to compare both models without
         # this information.
         self.pre_computed_neighborhoods = util.preprocess_k_hop_neigborhoods(
-            self.A, self.topological_heuristic_params["scaling_parameter"]) if self.batch_version else None
+            all_edges, A, self.topological_heuristic_params["scaling_parameter"]) if self.batch_version else None
 
-    def _get_pre_computed_neighborhoods(self, edges, max_neighbors=None):
+    def _get_pre_computed_neighborhoods(self, edges):
         neighbors = torch.Tensor()
         k_hop_neighborhood_edges = torch.Tensor()
 
@@ -86,14 +89,38 @@ class Gelato(torch.nn.Module):
 
             k_hop_neighborhood_edges_node_a = self.pre_computed_neighborhoods[int(node_a)]["k_hop_neighborhood_edges"]
             k_hop_neighborhood_edges_node_b = self.pre_computed_neighborhoods[int(node_b)]["k_hop_neighborhood_edges"]
-            k_hop_neighborhood_edges = torch.cat((k_hop_neighborhood_edges, k_hop_neighborhood_edges_node_a, k_hop_neighborhood_edges_node_b), axis=1)            
+            k_hop_neighborhood_edges = torch.cat((k_hop_neighborhood_edges, k_hop_neighborhood_edges_node_a, k_hop_neighborhood_edges_node_b), axis=1)
+
+        # We downsample our neighborhood due to optimize memory consupmtion
+        # Our neighborhood will be the nodes that compose our edges and
+        if (self.max_neighborhood_size and self.max_neighborhood_size <= len(neighbors)):
+            print(f"Downsampling neighbors from {len(neighbors)} to ", end="")
+            indices = torch.tensor(random.sample(range(0, len(neighbors)), self.max_neighborhood_size))
+            indices = torch.tensor(indices)
+            neighbors = neighbors[indices]
+
+            # Adding our original edges again in our neighborhood
+            valid_edge_indices = []
+            for idx, edge in enumerate(k_hop_neighborhood_edges):
+                if (edge[0] in neighbors) and (edge[1] in neighbors):
+                    valid_edge_indices.append(idx)
+
+            k_hop_neighborhood_edges = k_hop_neighborhood_edges[torch.Tensor(valid_edge_indices).long()]
+
+            print(f"{len(neighbors)}")
 
         return torch.unique(neighbors).long().to(self.A.device), torch.unique(k_hop_neighborhood_edges, dim=1).long().to(self.A.device)
 
     def forward_batched(self, edges, edges_pos=None):
+
         print("Edges shape", edges.shape)
-        neighbors, k_hop_neighborhood_edges = self._get_pre_computed_neighborhoods(edges)
-        
+        hops = self.topological_heuristic_params["scaling_parameter"]
+
+        # neighbors, k_hop_neighborhood_edges = self._get_pre_computed_neighborhoods(edges)
+        # k_hop_neighborhood = self.pre_computed_neighborhoods[cur_edge]
+        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
+            hops, edges, self.augmented_edges.T, device=self.A.device)
+    
 
         print("Neighbors", neighbors.shape)
         print("k_hop_neighborhood_edges", k_hop_neighborhood_edges.shape)
@@ -136,10 +163,9 @@ class Gelato(torch.nn.Module):
                             neighbor in enumerate(neighbors.tolist())}
 
         edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[:, 0].tolist()], [
-                               neighborhood_idx[edge] for edge in edges[:, 1].tolist()])
+                            neighborhood_idx[edge] for edge in edges[:, 1].tolist()])
         # print("Edges idx converted", edges_idx_converted)
         out = R[edges_idx_converted]
-
         return out
 
     def forward_full(self, edges, edges_pos=None):

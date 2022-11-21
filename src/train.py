@@ -1,6 +1,5 @@
 import argparse
 import torch
-from torch.utils.data import DataLoader
 from math import ceil
 from tqdm import tqdm
 from ast import literal_eval
@@ -23,19 +22,28 @@ def n_pair_loss(out_pos, out_neg):
     :return: loss (normalized by the total number of pairs)
     """
 
-    agg_size = out_neg.shape[0] // out_pos.shape[0]  # Number of negative pairs matched to a positive pair.
+    # Number of negative pairs matched to a positive pair.
+    agg_size = out_neg.shape[0] // out_pos.shape[0]
     agg_size_p1 = agg_size + 1
-    agg_size_p1_count = out_neg.shape[0] % out_pos.shape[0]  # Number of positive pairs that should be matched to agg_size + 1 instead because of the remainder.
+    # Number of positive pairs that should be matched to agg_size + 1 instead because of the remainder.
+    agg_size_p1_count = out_neg.shape[0] % out_pos.shape[0]
     out_pos_agg_p1 = out_pos[:agg_size_p1_count].unsqueeze(-1)
     out_pos_agg = out_pos[agg_size_p1_count:].unsqueeze(-1)
-    out_neg_agg_p1 = out_neg[:agg_size_p1_count * agg_size_p1].reshape(-1, agg_size_p1)
-    out_neg_agg = out_neg[agg_size_p1_count * agg_size_p1:].reshape(-1, agg_size)
-    out_diff_agg_p1 = out_neg_agg_p1 - out_pos_agg_p1  # Difference between negative and positive scores.
-    out_diff_agg = out_neg_agg - out_pos_agg  # Difference between negative and positive scores.
-    out_diff_exp_sum_p1 = torch.exp(torch.clamp(out_diff_agg_p1, max=80.0)).sum(axis=1)
-    out_diff_exp_sum = torch.exp(torch.clamp(out_diff_agg, max=80.0)).sum(axis=1)
+    out_neg_agg_p1 = out_neg[:agg_size_p1_count *
+                             agg_size_p1].reshape(-1, agg_size_p1)
+    out_neg_agg = out_neg[agg_size_p1_count *
+                          agg_size_p1:].reshape(-1, agg_size)
+    # Difference between negative and positive scores.
+    out_diff_agg_p1 = out_neg_agg_p1 - out_pos_agg_p1
+    # Difference between negative and positive scores.
+    out_diff_agg = out_neg_agg - out_pos_agg
+    out_diff_exp_sum_p1 = torch.exp(torch.clamp(
+        out_diff_agg_p1, max=80.0)).sum(axis=1)
+    out_diff_exp_sum = torch.exp(torch.clamp(
+        out_diff_agg, max=80.0)).sum(axis=1)
     out_diff_exp_cat = torch.cat([out_diff_exp_sum_p1, out_diff_exp_sum])
-    loss = torch.log(1 + out_diff_exp_cat).sum() / (len(out_pos) + len(out_neg))
+    loss = torch.log(1 + out_diff_exp_cat).sum() / \
+        (len(out_pos) + len(out_neg))
 
     return loss
 
@@ -54,15 +62,19 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
     model.train()
 
     total_loss = 0
-    edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(len(train_edges_pos)*train_batch_ratio), shuffle=True)
-    edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)    
+    edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(
+        len(train_edges_pos)*train_batch_ratio), shuffle=True)
+    edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(
+        len(train_edges_neg)*train_batch_ratio), shuffle=True)
 
     for batch_edges_pos, batch_edges_neg in tqdm(zip(edges_pos_loader, edges_neg_loader), desc='Train Batch', total=len(edges_pos_loader)):
 
         optimizer.zero_grad()
 
-        batch_edges = torch.vstack([batch_edges_pos, batch_edges_neg]).to(model.A.device)
-        batch_true = torch.cat([torch.ones(batch_edges_pos.shape[0], dtype=int), torch.zeros(batch_edges_neg.shape[0], dtype=int)]).to(model.A.device)
+        batch_edges = torch.vstack(
+            [batch_edges_pos, batch_edges_neg]).to(model.A.device)
+        batch_true = torch.cat([torch.ones(batch_edges_pos.shape[0], dtype=int), torch.zeros(
+            batch_edges_neg.shape[0], dtype=int)]).to(model.A.device)
         out = model(batch_edges, batch_edges_pos.to(model.A.device))
 
         # Compute loss.
@@ -133,6 +145,8 @@ def parse_args():
                         help='Index of cuda device to use. Default is 0. ')
     parser.add_argument('--batch-version', type=bool, default=False,
                         help='Use the batch or full graph version. ')
+    parser.add_argument('--max-neighborhood-size', type=int, default=500,
+                        help='Only used in the batch version. Defines the maximum amount of neighbors to be sampled in a batch.')
 
     return parser.parse_args()
 
@@ -143,7 +157,8 @@ def main():
 
     """
     args = parse_args()
-    device = torch.device(f'cuda:{args.cuda}' if torch.cuda.is_available() else 'cpu')
+    device = torch.device(
+        f'cuda:{args.cuda}' if torch.cuda.is_available() else 'cpu')
 
     # Set up results folder.
     results_folder = f'data/{args.dataset}/model/'
@@ -157,12 +172,13 @@ def main():
     split_edge = util.split_dataset(data)
     data.edge_index = split_edge['train']['edge'].t()
     data.edge_weight = data.train_pos_edge_attr
-    train_edges_pos, train_edges_neg, valid_edges, valid_true, test_edges, test_true = util.compute_edges(split_edge)
+    train_edges_pos, train_edges_neg, valid_edges, valid_true, test_edges, test_true = util.compute_edges(
+        split_edge)
 
     # Hyperparameters
-    A = torch.sparse_coo_tensor(data.edge_index, data.edge_weight.squeeze(), size=(data.num_nodes, data.num_nodes)).to_dense()
+    A = torch.sparse_coo_tensor(data.edge_index, data.edge_weight.squeeze(), size=(
+        data.num_nodes, data.num_nodes)).to_dense()
     X = data.x
-
     hyperparameters = {
         'gelato': {
             'A': A,
@@ -188,15 +204,18 @@ def main():
                 'scaling_parameter': args.scaling_parameter
             },
             'batch_version': args.batch_version,
+            'all_edges': torch.cat((train_edges_pos, train_edges_neg, valid_edges)),
+            'max_neighborhood_size': args.max_neighborhood_size
         },
         'lr': args.lr,
         'epochs': args.epochs,
         'train_batch_ratio': args.train_batch_ratio,
     }
 
-    # quit()
-
     wandb.init(project="gelato", entity="joaopedromattos", config=args)
+
+    batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
+    wandb.run.name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
 
     # Training.
     util.set_random_seed(args.random_seed)
@@ -207,29 +226,38 @@ def main():
 
     best_valid_prec = -1
     best_epoch = -1
-    epoch_iterator = tqdm(range(1, 1 + hyperparameters['epochs']), desc='Epoch')
+    epoch_iterator = tqdm(
+        range(1, 1 + hyperparameters['epochs']), desc='Epoch')
     for epoch in epoch_iterator:
 
-        loss = train(model, optimizer, train_edges_pos, train_edges_neg, hyperparameters['train_batch_ratio'])
+        loss = train(model, optimizer, train_edges_pos,
+                     train_edges_neg, hyperparameters['train_batch_ratio'])
 
         valid_prec = valid(model, valid_edges, valid_true)
         with open(log_file, 'a') as f:
             print(f"Epoch = {epoch}:", file=f)
             print(f"Loss = {loss:.4e}", file=f)
             print(f"Valid precision@100%: {valid_prec:.2%}", file=f)
+
+        wandb.log({"val_epoch_loss": loss})
+        wandb.log({"val_precision_@_100%": valid_prec})
+
         if valid_prec > best_valid_prec:
             best_epoch = epoch
             best_valid_prec = valid_prec
 
-        torch.save(model.state_dict(), results_folder + f'model_checkpoint{epoch}.pth')
-        torch.save(optimizer.state_dict(), results_folder + f'optimizer_checkpoint{epoch}.pth')
+        torch.save(model.state_dict(), results_folder +
+                   f'model_checkpoint{epoch}.pth')
+        torch.save(optimizer.state_dict(), results_folder +
+                   f'optimizer_checkpoint{epoch}.pth')
 
-        wandb.log({"epoch_loss":loss})
+        wandb.log({"epoch_loss": loss})
 
     # Record the best model.
     with open(log_file, 'a') as f:
         print(f"Best epoch = {best_epoch}", file=f)
-    shutil.copyfile(results_folder + f'model_checkpoint{best_epoch}.pth', results_folder + f'model_best.pth')
+    shutil.copyfile(
+        results_folder + f'model_checkpoint{best_epoch}.pth', results_folder + f'model_best.pth')
 
 
 if __name__ == "__main__":

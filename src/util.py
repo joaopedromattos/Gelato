@@ -135,7 +135,7 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
     hops (int) -> Number of hops to create the neighborhood
     edges ()
     """
-
+    print(edges)
     neighbors_a, edges_neighborhood_node_a, _, _ = k_hop_subgraph(node_idx=edges[0], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
     neighbors_b, edges_neighborhood_node_b, _, _ = k_hop_subgraph(node_idx=edges[1], num_hops=hops, edge_index=edge_index, relabel_nodes=False)
 
@@ -161,19 +161,19 @@ def compute_k_hop_neighborhood_from_nodes(hops, nodes, edge_index, device="cpu",
     return neighbors, k_hop_neighborhood_edges
 
 
-def preprocess_k_hop_neigborhoods(A, hops):
+def preprocess_k_hop_neigborhoods(edges, A, hops):
     """
     Given a network (A) and a number of hops,
     this function returns the k-hop neighborhood that surrounds
-    every node in A.
+    every edge in A.
     """
     k_hop_neighborhoods = {}
 
     # Preprocessing our neighborhoods
-    for node in tqdm(range(A.shape[0]), desc="Preprocessing neighborhoods..."):
-        k_hop_neighborhoods[node] = {}
-        k_hop_neighborhoods[node]["neighbors"], k_hop_neighborhoods[node]["k_hop_neighborhood_edges"] = compute_k_hop_neighborhood_from_nodes(
-            hops, node, torch.nonzero(A).T, A.device, False)
+    for edge in tqdm(edges, desc="Preprocessing neighborhoods..."):
+        k_hop_neighborhoods[edge] = {}
+        k_hop_neighborhoods[edge]["neighbors"], k_hop_neighborhoods[edge]["k_hop_neighborhood_edges"] = compute_k_hop_neighborhood_edges(
+            hops, edge, torch.nonzero(A).T, A.device, False)
 
     return k_hop_neighborhoods
 
