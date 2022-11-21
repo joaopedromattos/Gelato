@@ -12,6 +12,8 @@ from eval import valid
 
 import wandb
 
+from scalene import scalene_profiler
+
 
 
 
@@ -58,13 +60,22 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
     edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(len(train_edges_pos)*train_batch_ratio), shuffle=True)
     edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)
 
+    # profile_flag = True
+
     for batch_edges_pos, batch_edges_neg in tqdm(zip(edges_pos_loader, edges_neg_loader), desc='Train Batch', total=len(edges_pos_loader)):
 
         optimizer.zero_grad()
 
         batch_edges = torch.vstack([batch_edges_pos, batch_edges_neg]).to(model.A.device)
         batch_true = torch.cat([torch.ones(batch_edges_pos.shape[0], dtype=int), torch.zeros(batch_edges_neg.shape[0], dtype=int)]).to(model.A.device)
+
+        # if (profile_flag):
+        #     scalene_profiler.start()
         out = model(batch_edges, batch_edges_pos.to(model.A.device))
+
+        # if (profile_flag):
+        #     scalene_profiler.stop()
+        #     profile_flag = False
 
         # Compute loss.
         out_pos = out[:batch_edges_pos.shape[0]]

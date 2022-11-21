@@ -149,18 +149,17 @@ def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", rela
 
         neighbors = torch.unique(torch.cat((neighbors.to(device), edges.flatten())), sorted=True)
 
-        mask = []
-        for idx, edge in enumerate(edges_neighborhood_node.T):
-            if (edge[0] in neighbors) and (edge[1] in neighbors):
-                mask.append(idx)
+        # mask = []
+        # for idx, edge in enumerate(edges_neighborhood_node.T):
+        #     if (edge[0] in neighbors) and (edge[1] in neighbors):
+        #         mask.append(idx)
 
-        edges_neighborhood_node = edges_neighborhood_node[:, torch.tensor(mask)]
+        # edges_neighborhood_node = edges_neighborhood_node[:, torch.tensor(mask)]
 
         # print(edges_neighborhood_node.shape)
         # print(mask)
         edges_neighborhood_node = torch.unique(torch.cat((edges_neighborhood_node.to(device), edges), axis=1), dim=1)
 
 
-    # print("New neighborhood size", neighbors.shape)
-    # print("New edges size", k_hop_neighborhood_edges.shape)
+    print("New neighborhood size", neighbors.shape)
     return neighbors, edges_neighborhood_node

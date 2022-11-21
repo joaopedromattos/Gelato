@@ -49,66 +49,90 @@ class Gelato(torch.nn.Module):
         # Compute untrained edge weights and the augmented edges.
         # TODO => I think this should be computed in execution time, 
         # otherwise we're storing a huge NxN matrix
-        S = pairwise_kernels(self.X, metric='cosine')
-        if self.eta != 0.0:
-            num_edges = (self.A != 0).sum()
-            num_untrained_similarity_edges = floor(num_edges * self.eta)
-            np.fill_diagonal(S, 0)
-            threshold = np.partition(
-                S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
-            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
-                S > threshold), persistent=False)
-        else:
-            self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
-                np.zeros_like(S)), persistent=False)
+        if (not self.batch_version):
+            S = pairwise_kernels(self.X, metric='cosine')
+            if self.eta != 0.0:
+                num_edges = (self.A != 0).sum()
+                num_untrained_similarity_edges = floor(num_edges * self.eta)
+                np.fill_diagonal(S, 0)
+                threshold = np.partition(
+                    S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
+                self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
+                    S > threshold), persistent=False)
+            else:
+                self.register_buffer('untrained_similarity_edge_mask', torch.BoolTensor(
+                    np.zeros_like(S)), persistent=False)
 
-        augmented_edge_mask = self.A.to(
-            bool) + self.untrained_similarity_edge_mask
-        self.register_buffer('S', torch.relu(torch.FloatTensor(
-            S) * augmented_edge_mask), persistent=False)
-        self.augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
+            augmented_edge_mask = self.A.to(
+                bool) + self.untrained_similarity_edge_mask
+            self.register_buffer('S', torch.relu(torch.FloatTensor(
+                S) * augmented_edge_mask), persistent=False)
+            self.augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
 
-        self.augmented_edge_loader = util.compute_batches(
-            self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
+            self.augmented_edge_loader = util.compute_batches(
+                self.augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
+    
 
     def forward_batched(self, edges, edges_pos=None):
+
+        # Positive masking.
+        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(
+            edges_pos.shape[0], device=self.A.device)) if self.training else self.A
+
+        print("Edges", edges.shape)
+        
         hops = self.topological_heuristic_params["scaling_parameter"]
 
-        # We are going to use PyG functions
-        # so here we convert our edges to the
-        # standard format
-        edges = edges.T
-
+        full_graph_edges = torch.nonzero(self.A).T
 
         neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges, self.augmented_edges.T, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
+            hops, edges.T, full_graph_edges, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
 
-        # Hash creation
-        # This will be used to reduce the size of all tensors used in the
-        # computation of the autocovatiance
+        # Hash creation step.
+        # This will be used to reduce the size of all tensors used in the computation of the autocovatiance
         neighborhood_idx = {neighbor: idx for idx,
                             neighbor in enumerate(neighbors.tolist())}
-        edges_idx_converted = ([neighborhood_idx[edge] for edge in edges[0].tolist()], [
-                               neighborhood_idx[edge] for edge in edges[1].tolist()])
-        k_hop_neighborhood_edges = torch.Tensor(([neighborhood_idx[edge] for edge in k_hop_neighborhood_edges[0].tolist()], [
-                               neighborhood_idx[edge] for edge in k_hop_neighborhood_edges[1].tolist()]), device=k_hop_neighborhood_edges.device).long()
+        edges_idx_converted = [[neighborhood_idx[node_a], neighborhood_idx[node_b]] for node_a, node_b in edges.tolist() if node_a in neighborhood_idx and node_b in neighborhood_idx]
+        edges_idx_converted = tuple(torch.tensor(edges_idx_converted).T.tolist())
+        k_hop_neighborhood_edges = torch.tensor([(neighborhood_idx[node_a], neighborhood_idx[node_b]) for node_a, node_b in k_hop_neighborhood_edges.T.tolist() if node_a in neighborhood_idx and node_b in neighborhood_idx]).T
         # print(k_hop_neighborhood_edges)
 
         # print("Edges stats", edges.shape, "max", max(edges_idx_converted))
         print("k_hop_neighborhood_edges", k_hop_neighborhood_edges.shape, "max", max(k_hop_neighborhood_edges.flatten()), "max", min(k_hop_neighborhood_edges.flatten()))
         print("Neighbors stats - max", max(neighborhood_idx.keys()), 'min', min(neighborhood_idx.keys()), 'len', len(neighbors))
 
-        self.augmented_edge_loader = util.compute_batches(
+        augmented_edge_loader = util.compute_batches(
             k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
-        # Positive masking.
-        A = self.A.index_put(tuple(edges_pos.t()), torch.zeros(
-            edges_pos.shape[0], device=self.A.device)) if self.training else self.A
 
+        # We construct a version of the adjacency and feature
+        # matrices that use only the nodes from the neighborhood
+        # being explored.
         A = A[neighbors][:, neighbors]
-        untrained_similarity_edge_mask = self.untrained_similarity_edge_mask[neighbors][:, neighbors]
-        S = self.S[neighbors][:, neighbors] # TODO => THIS WILL BE COMPUTED IN EXECUTION TIME IN THE FUTURE
+        X = self.X[neighbors]
+
+        # Using the new A and X we can construct the 
+        # untrained_similarity_edge_mask in execution time,
+        # which prevents us from storing an NxN matrix in RAM
+        # all the time. 
+        # S = X @ X.T # Cosine similarity 
+        S = torch.tensor(pairwise_kernels(X.cpu(), metric='cosine'), device=self.X.device)
+        if self.eta != 0.0:
+            num_edges = (A != 0).sum()
+            num_untrained_similarity_edges = floor(num_edges * self.eta)
+            np.fill_diagonal(S, 0)
+            threshold = np.partition(
+                S.flatten(), -num_untrained_similarity_edges)[-num_untrained_similarity_edges]
+            untrained_similarity_edge_mask = (S > threshold).bool()
+        else:
+            untrained_similarity_edge_mask = torch.zeros_like(S).bool()
+
+        augmented_edge_mask = A.to(bool) + untrained_similarity_edge_mask
+        S = torch.relu(S.float() * augmented_edge_mask)
+        augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
+
+        augmented_edge_loader = util.compute_batches(augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
         print("A.shape", A.shape)
         print("untrained_similarity_edge_mask.shape", untrained_similarity_edge_mask.shape)
@@ -118,7 +142,7 @@ class Gelato(torch.nn.Module):
         W = torch.zeros((len(neighbors), len(neighbors)), device=self.A.device)
 
         print("W.shape", W.shape)
-        for i, batch in enumerate(tqdm(self.augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(self.augmented_edge_loader))):
+        for i, batch in enumerate(tqdm(augmented_edge_loader, desc=f'Compute trained weights - Edges: {k_hop_neighborhood_edges.shape}', total=len(augmented_edge_loader))):
             out = self.graph_learning(self.X, batch.to(self.A.device))
             W[tuple(batch.t())] = out
         W = W + W.t()
