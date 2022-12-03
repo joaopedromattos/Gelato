@@ -14,9 +14,6 @@ import wandb
 
 # from scalene import scalene_profiler
 
-
-
-
 def n_pair_loss(out_pos, out_neg):
     """
     Compute the N-pair loss.
@@ -211,7 +208,7 @@ def main():
     batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
     run_name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
 
-    wandb.init(project="gelato", entity="joaopedromattos", config=args, name=run_name)
+    wandb.init(project="gelato", entity="joaopedromattos", config=args, name=run_name, settings=wandb.Settings(start_method="fork"))
 
     # Training.
     util.set_random_seed(args.random_seed)

@@ -46,9 +46,6 @@ class Gelato(torch.nn.Module):
             'ac': Autocovariance,
         }[topological_heuristic_type](**topological_heuristic_params)
 
-        # Compute untrained edge weights and the augmented edges.
-        # TODO => I think this should be computed in execution time, 
-        # otherwise we're storing a huge NxN matrix
         if (not self.batch_version):
             S = pairwise_kernels(self.X, metric='cosine')
             if self.eta != 0.0:
@@ -84,33 +81,28 @@ class Gelato(torch.nn.Module):
         
         hops = self.topological_heuristic_params["scaling_parameter"]
 
-        full_graph_edges = torch.nonzero(self.A).T
+        A_edges = torch.nonzero(A).T
 
         neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges.T, full_graph_edges, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
+            hops, edges.T, A_edges, device=self.A.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
 
         # Hash creation step.
         # This will be used to reduce the size of all tensors used in the computation of the autocovatiance
-        neighborhood_idx = {neighbor: idx for idx,
-                            neighbor in enumerate(neighbors.tolist())}
+        neighborhood_idx = dict(zip(neighbors.tolist(), range(0, len(neighbors))))
         edges_idx_converted = [[neighborhood_idx[node_a], neighborhood_idx[node_b]] for node_a, node_b in edges.tolist() if node_a in neighborhood_idx and node_b in neighborhood_idx]
         edges_idx_converted = tuple(torch.tensor(edges_idx_converted).T.tolist())
-        k_hop_neighborhood_edges = torch.tensor([(neighborhood_idx[node_a], neighborhood_idx[node_b]) for node_a, node_b in k_hop_neighborhood_edges.T.tolist() if node_a in neighborhood_idx and node_b in neighborhood_idx]).T
+        # k_hop_neighborhood_edges = torch.tensor([(neighborhood_idx[node_a], neighborhood_idx[node_b]) for node_a, node_b in k_hop_neighborhood_edges.T.tolist() if node_a in neighborhood_idx and node_b in neighborhood_idx]).T
         # print(k_hop_neighborhood_edges)
 
         # print("Edges stats", edges.shape, "max", max(edges_idx_converted))
         print("k_hop_neighborhood_edges", k_hop_neighborhood_edges.shape, "max", max(k_hop_neighborhood_edges.flatten()), "max", min(k_hop_neighborhood_edges.flatten()))
         print("Neighbors stats - max", max(neighborhood_idx.keys()), 'min', min(neighborhood_idx.keys()), 'len', len(neighbors))
 
-        augmented_edge_loader = util.compute_batches(
-            k_hop_neighborhood_edges.T, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
-
-
         # We construct a version of the adjacency and feature
         # matrices that use only the nodes from the neighborhood
         # being explored.
         A = A[neighbors][:, neighbors]
-        X = self.X[neighbors]
+        X = self.X[neighbors].float()
 
         # Using the new A and X we can construct the 
         # untrained_similarity_edge_mask in execution time,
@@ -130,8 +122,6 @@ class Gelato(torch.nn.Module):
         augmented_edge_mask = A.to(bool) + untrained_similarity_edge_mask
         S = torch.relu(S.float() * augmented_edge_mask)
         augmented_edges = augmented_edge_mask.triu().nonzero(as_tuple=False)
-
-        augmented_edge_loader = util.compute_batches(augmented_edges, batch_size=self.trained_edge_weight_batch_size, shuffle=False)
 
         print("A.shape", A.shape)
         print("untrained_similarity_edge_mask.shape", untrained_similarity_edge_mask.shape)
