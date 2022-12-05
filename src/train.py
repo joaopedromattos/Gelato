@@ -12,7 +12,7 @@ from eval import valid
 
 import wandb
 
-# from scalene import scalene_profiler
+from scalene import scalene_profiler
 
 def n_pair_loss(out_pos, out_neg):
     """
@@ -57,7 +57,7 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
     edges_pos_loader = util.compute_batches(train_edges_pos, batch_size=ceil(len(train_edges_pos)*train_batch_ratio), shuffle=True)
     edges_neg_loader = util.compute_batches(train_edges_neg, batch_size=ceil(len(train_edges_neg)*train_batch_ratio), shuffle=True)
 
-    # profile_flag = True
+    profile_flag = True
 
     for batch_edges_pos, batch_edges_neg in tqdm(zip(edges_pos_loader, edges_neg_loader), desc='Train Batch', total=len(edges_pos_loader)):
 
@@ -66,20 +66,20 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
         batch_edges = torch.vstack([batch_edges_pos, batch_edges_neg]).to(model.A.device)
         batch_true = torch.cat([torch.ones(batch_edges_pos.shape[0], dtype=int), torch.zeros(batch_edges_neg.shape[0], dtype=int)]).to(model.A.device)
 
-        # if (profile_flag):
-        #     scalene_profiler.start()
+        if (profile_flag):
+            scalene_profiler.start()
         out = model(batch_edges, batch_edges_pos.to(model.A.device))
 
-        # if (profile_flag):
-        #     scalene_profiler.stop()
-        #     profile_flag = False
+        if (profile_flag):
+            scalene_profiler.stop()
+            profile_flag = False
 
         # Compute loss.
         out_pos = out[:batch_edges_pos.shape[0]]
         out_neg = out[batch_edges_pos.shape[0]:]
 
         loss = n_pair_loss(out_pos, out_neg)
-        total_loss += loss.item() * len(batch_true)
+        total_loss += loss.detach().item() * len(batch_true)
 
         loss.backward()
 
@@ -164,7 +164,7 @@ def main():
 
     # Load dataset and split edges.
     data = util.load_dataset(args.dataset)
-    data.edge_attr = torch.ones([data.edge_index.shape[1], 1], dtype=int)
+    x = torch.ones([data.edge_index.shape[1], 1], dtype=int)
     split_edge = util.split_dataset(data)
     data.edge_index = split_edge['train']['edge'].t()
     data.edge_weight = data.train_pos_edge_attr
@@ -198,7 +198,8 @@ def main():
                 'scaling_parameter': args.scaling_parameter
             },
             'batch_version': args.batch_version,
-            'max_neighborhood_size': args.max_neighborhood_size
+            'max_neighborhood_size': args.max_neighborhood_size,
+            'device': device
         },
         'lr': args.lr,
         'epochs': args.epochs,
@@ -208,7 +209,7 @@ def main():
     batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
     run_name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
 
-    wandb.init(project="gelato", entity="joaopedromattos", config=args, name=run_name, settings=wandb.Settings(start_method="fork"))
+    wandb.init(mode="disabled", project="gelato", entity="joaopedromattos", config=args, name=run_name, settings=wandb.Settings(start_method="fork"))
 
     # Training.
     util.set_random_seed(args.random_seed)
@@ -241,6 +242,8 @@ def main():
         torch.save(optimizer.state_dict(), results_folder + f'optimizer_checkpoint{epoch}.pth')
 
         wandb.log({"epoch_loss":loss})
+        
+        del loss
 
     # Record the best model.
     with open(log_file, 'a') as f:
