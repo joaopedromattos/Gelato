@@ -104,13 +104,13 @@ class Gelato(torch.nn.Module):
 
         A_edges = torch.nonzero(A).T
 
-        neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
-            hops, edges.T, A_edges, device=self.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
+        # neighbors, k_hop_neighborhood_edges = util.compute_k_hop_neighborhood_edges(
+        #     hops, edges.T, A_edges, device=self.device, max_neighborhood_size=self.max_neighborhood_size, relabel=False)
 
         # neighborhood = self.neighbor_sampler.sample(edges.flatten().to('cpu'))
         # neighbors = neighborhood[1]
 
-        # neighbors = torch.unique(edges.flatten())
+        neighbors = torch.unique(edges.flatten())
 
         # Hash creation step.
         # This will be used to reduce the size of all tensors used in the computation of the autocovatiance
