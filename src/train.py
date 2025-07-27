@@ -10,8 +10,6 @@ import util
 from gelato import Gelato
 from eval import valid
 
-import wandb
-
 
 def n_pair_loss(out_pos, out_neg):
     """
@@ -67,13 +65,10 @@ def train(model, optimizer, train_edges_pos, train_edges_neg, train_batch_ratio)
         # Compute loss.
         out_pos = out[:batch_edges_pos.shape[0]]
         out_neg = out[batch_edges_pos.shape[0]:]
-
         loss = n_pair_loss(out_pos, out_neg)
         total_loss += loss.item() * len(batch_true)
 
         loss.backward()
-
-        # wandb.log({"step_loss": loss/len(batch_edges)})
 
         # Skipping the updating of nan gradients.
         nan_grad = False
@@ -130,10 +125,6 @@ def parse_args():
                         help='Random seed for training. Default is 1. ')
     parser.add_argument('--cuda', type=int, default=0,
                         help='Index of cuda device to use. Default is 0. ')
-    parser.add_argument('--batch-version', type=bool, default=False,
-                        help='Use the batch or full graph version. ')
-    parser.add_argument('--max-neighborhood-size', type=int, default=10_000,
-                        help='Only used in the batch version. Defines the maximum amount of neighbors to be sampled in a batch.')
 
     return parser.parse_args()
 
@@ -187,25 +178,17 @@ def main():
             'topological_heuristic_params': {
                 'scaling_parameter': args.scaling_parameter
             },
-            'batch_version': args.batch_version,
-            'max_neighborhood_size': args.max_neighborhood_size
         },
         'lr': args.lr,
         'epochs': args.epochs,
         'train_batch_ratio': args.train_batch_ratio,
     }
 
-    batched_version_name = f"Batched-{args.train_batch_ratio}-{args.max_neighborhood_size}" if args.batch_version else "Full"
-    run_name = f"{args.dataset}-{batched_version_name}-{args.scaling_parameter}"
-
-    wandb.init(project="gelato", entity="joaopedromattos", config=args, name=run_name)
-
     # Training.
     util.set_random_seed(args.random_seed)
     model = Gelato(**hyperparameters['gelato']).to(device)
     parameters = list(model.parameters())
     optimizer = torch.optim.Adam(parameters, lr=hyperparameters['lr'])
-    wandb.watch(model)
 
     best_valid_prec = -1
     best_epoch = -1
@@ -219,18 +202,12 @@ def main():
             print(f"Epoch = {epoch}:", file=f)
             print(f"Loss = {loss:.4e}", file=f)
             print(f"Valid precision@100%: {valid_prec:.2%}", file=f)
-
-        wandb.log({"val_epoch_loss":loss})
-        wandb.log({"val_precision_@_100%":valid_prec})
-
         if valid_prec > best_valid_prec:
             best_epoch = epoch
             best_valid_prec = valid_prec
 
         torch.save(model.state_dict(), results_folder + f'model_checkpoint{epoch}.pth')
         torch.save(optimizer.state_dict(), results_folder + f'optimizer_checkpoint{epoch}.pth')
-
-        wandb.log({"epoch_loss":loss})
 
     # Record the best model.
     with open(log_file, 'a') as f:

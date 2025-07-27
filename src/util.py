@@ -2,8 +2,7 @@ import torch
 import numpy as np
 import random
 from torch_geometric.datasets import Planetoid, Amazon
-from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges, k_hop_subgraph
-from tqdm import tqdm
+from torch_geometric.utils import negative_sampling, add_self_loops, train_test_split_edges
 
 
 def set_random_seed(random_seed):
@@ -124,40 +123,201 @@ def compute_batches(rows, batch_size, shuffle=True):
         return torch.split(rows[torch.randperm(rows.shape[0])], batch_size)
     else:
         return torch.split(rows, batch_size)
-
-def compute_k_hop_neighborhood_edges(hops, edges, edge_index, device="cpu", relabel=False, max_neighborhood_size=None):
-    """
-    Given an edge (or a set of edges), returns the edges and the nodes
-    that constitute the k-hop subgraph around this edge.
-
-    Params:
-    hops (int) -> Number of hops to create the neighborhood
-    edges ()
-    """
-    # print("Max neigh size", max_neighborhood_size)
-
-    neighbors, edges_neighborhood_node, _, _ = k_hop_subgraph(node_idx=edges.flatten(), num_hops=hops, edge_index=edge_index, relabel_nodes=False)
     
-    # Compute trained edge weights.
-    if (max_neighborhood_size and (max_neighborhood_size < len(neighbors))):
-        # print("Inside the if")
-        indices = random.sample(range(len(neighbors)), int(max_neighborhood_size/2))
-        indices = torch.tensor(indices)
-        neighbors = neighbors[indices]
+    
+ def graph_splits(graph_partitions, train_graph, val_graph, test_graph, full_training=True, save_dir=None, ogbl=False):
+    '''
+    Given the train, validation and test graphs, along with the graph partitions, this function
+    organizes our training data in different splits, one per graph partition and removes possible leaks between
+    training, validation and test due to the sampling procedure done per partition.
+    
+    :param graph_partitions: ClusterData object of the graph partitioned.
+    :param train_graph: torch_geometric.data.Data object with the training graph as the edge index.
+    :param val_graph: torch_geometric.data.Data object with the validation pairs.
+    :param test_graph: torch_geometric.data.Data object with the test pairs.
+    :param full_training: generates splits using full training (True) or biased training (False).
+    :param save_dir: path in which we will cache the splits.
+    :param ogbl: in case we are using full-training in ogbl datasets, it samples validation and test negative pairs only within each cluster.
+    
+    :return: splits, intercluster_splits, node_to_partition
+    '''
 
-        neighbors = torch.unique(torch.cat((neighbors.to(device), edges.flatten())), sorted=True)
+    n_partitions = len(graph_partitions)
 
-        mask = []
-        for idx, edge in enumerate(edges_neighborhood_node.T):
-            if (edge[0] in neighbors) and (edge[1] in neighbors):
-                mask.append(idx)
+    # If we have cached data, then we will just read it
+    if save_dir and os.path.isfile(save_dir + f'splits_{n_partitions}.pt'):
+        splits = torch.load(save_dir + f'splits_{n_partitions}.pt')
+        intercluster_splits = torch.load(save_dir + f'intercluster_splits_{n_partitions}.pt')
+        node_to_partition = torch.load(save_dir + f'node_to_partition_{n_partitions}.pt')
 
-        edges_neighborhood_node = edges_neighborhood_node[:, torch.tensor(mask)]
+        return splits, intercluster_splits, node_to_partition
 
-        # print(edges_neighborhood_node.shape)
-        # print(mask)
-        k_hop_neighborhood_edges = torch.unique(torch.cat((edges_neighborhood_node.to(device), edges), axis=1), dim=1)
 
-    # print("New neighborhood size", neighbors.shape)
-    # print("New edges size", k_hop_neighborhood_edges.shape)
-    return neighbors, k_hop_neighborhood_edges
+    # Stores partition metadata regarding each node of the network.
+    node_to_partition = {}
+    partition_idx = 0
+    node_partition_idx = 0
+    for idx, node in enumerate(graph_partitions.perm):
+        if idx >= graph_partitions.partptr[partition_idx + 1]:
+            partition_idx += 1
+            node_partition_idx = 0
+
+        node_to_partition[int(node)] = dict()
+        node_to_partition[int(node)]['node_partition_idx'] = partition_idx # In which partition this node is located
+        node_to_partition[int(node)]['node_idx'] = node_partition_idx # What is its index in the partition it is located
+
+        node_partition_idx += 1
+    
+    splits = dict()
+
+
+    valid_edge_index = val_graph.edge_index
+    test_edge_index = test_graph.edge_index
+
+    valid_edges = val_graph.edge_label_index
+    valid_true = val_graph.edge_label
+
+    test_edges = test_graph.edge_label_index
+    test_true = test_graph.edge_label
+
+    intercluster_mask_val = torch.zeros((val_graph.edge_label_index.shape[1])).bool()
+    intercluster_mask_test = torch.zeros((test_graph.edge_label_index.shape[1])).bool()
+
+    intracluster_pairs_val, intracluster_idx_val = remove_intercluster(val_graph.edge_label_index, node_to_partition=node_to_partition)
+    intracluster_pairs_test, intracluster_idx_test = remove_intercluster(test_graph.edge_label_index, node_to_partition=node_to_partition)
+
+    intercluster_mask_val = (intracluster_idx_val == - 1)
+    intercluster_mask_test = (intracluster_idx_test == -1) 
+    
+    _, intracluster_edge_idx_val = remove_intercluster(val_graph.edge_index, node_to_partition=node_to_partition)
+    _, intracluster_edge_idx_test = remove_intercluster(test_graph.edge_index, node_to_partition=node_to_partition)
+
+    
+    for idx, partition in tqdm(enumerate(graph_partitions), desc="Processing graph partitions"):
+
+        subgraph = partition
+
+        train_edge_index = subgraph.edge_index
+
+        splits[idx] = dict()
+
+        splits[idx]['subgraph'] = subgraph
+
+        splits[idx]['train_edge_index'] = train_edge_index
+
+
+        del subgraph.edge_label, subgraph.edge_label_index
+
+        
+        # Resampling subgraph pairs.
+        # The idea here is to take advantage of the fact that we have
+        # a subgraph computed using METIS to sample more informative pairs
+        # than the ones contained in the original training set.
+        transform = RandomLinkSplit(is_undirected=False, num_val=0.0, num_test=0.0)
+        subgraph_train, subgraph_val, subgraph_test = transform(subgraph)
+
+
+        num_pos_edges = subgraph_train.edge_label.bool().sum()
+        num_neg_edges = (~subgraph_train.edge_label.bool()).sum()
+
+        train_edges_pos = subgraph_train.edge_label_index[:, subgraph_train.edge_label.bool()]
+
+        if full_training:
+            n = subgraph.num_nodes
+            # code.interact(local=locals())
+            train_edge_neg_mask = torch.ones((n, n), dtype=bool)
+            train_edge_neg_mask[tuple(train_edges_pos.tolist())] = False
+            train_edge_neg_mask = torch.triu(train_edge_neg_mask, 1)
+            train_edges_neg = torch.nonzero(train_edge_neg_mask).t()
+
+            if (ogbl):
+
+                subgraph_val_edges_pos = subgraph_val.edge_label_index[:, subgraph_val.edge_label.bool()]
+                subgraph_test_edges_pos = subgraph_test.edge_label_index[:, subgraph_test.edge_label.bool()]
+                
+                valid_edge_neg_mask = train_edge_neg_mask.clone()
+                valid_edge_neg_mask[tuple(subgraph_val_edges_pos.tolist())] = False
+                valid_edges_neg = torch.nonzero(valid_edge_neg_mask).t()
+
+                # Full testing with all negative pairs in the training graph (excluding validation and testing positive edges).
+                test_edge_neg_mask = valid_edge_neg_mask.clone()
+                test_edge_neg_mask[tuple(subgraph_test_edges_pos.tolist())] = False
+                test_edges_neg = torch.nonzero(test_edge_neg_mask).t()
+
+        else:
+            train_edges_neg = subgraph_train.edge_label_index[:, ~subgraph_train.edge_label.bool()] 
+
+
+        splits[idx]['train_edges_pos'] = train_edges_pos
+        splits[idx]['train_edges_neg'] = train_edges_neg
+        
+
+        
+        cluster_mask_val = (intracluster_idx_val == idx)
+        cluster_mask_test = (intracluster_idx_test == idx)
+
+        if (ogbl):
+
+            valid_edges_pos = convert_to_partition_index(valid_edges[:, cluster_mask_val], node_to_partition)
+
+            test_edges_pos = convert_to_partition_index(test_edges[:, cluster_mask_test], node_to_partition)
+
+            splits[idx]['valid_edges'] = torch.cat([valid_edges_pos, valid_edges_neg], dim=1)
+            splits[idx]['valid_true'] = torch.cat([torch.ones(valid_edges_pos.shape[1]), torch.zeros(valid_edges_neg.shape[1])])
+
+            splits[idx]['test_edges'] = torch.cat([test_edges_pos, test_edges_neg], dim=1)
+            splits[idx]['test_true'] = torch.cat([torch.ones(test_edges_pos.shape[1]), torch.zeros(test_edges_neg.shape[1])])
+
+            splits[idx]['valid_edge_index'] = subgraph_val.edge_index
+            
+            splits[idx]['test_edge_index'] = subgraph_test.edge_index
+
+        else:
+            # Selecting the validation edges contained in the cluster 'idx'
+            splits[idx]['valid_edges'] = convert_to_partition_index(valid_edges[:, cluster_mask_val], node_to_partition)
+            splits[idx]['valid_true'] = valid_true[cluster_mask_val]
+
+            # Selecting the validation edges contained in the cluster 'idx'
+            splits[idx]['test_edges'] = convert_to_partition_index(test_edges[:, cluster_mask_test], node_to_partition)
+            splits[idx]['test_true'] = test_true[cluster_mask_test]
+
+
+            cluster_edge_idx_mask_val = (intracluster_edge_idx_val == idx)
+            cluster_edge_idx_mask_test = (intracluster_edge_idx_test == idx)
+
+            splits[idx]['valid_edge_index'] = convert_to_partition_index(valid_edge_index[:, cluster_edge_idx_mask_val], node_to_partition)
+
+            splits[idx]['test_edge_index'] = convert_to_partition_index(test_edge_index[:, cluster_edge_idx_mask_test], node_to_partition)
+
+
+    # Accounting for the intercluster pairs left behind
+    intercluster_splits = dict()
+    
+    intercluster_splits['valid_edges'] = valid_edges[:, intercluster_mask_val]
+    intercluster_splits['valid_true'] = valid_true[intercluster_mask_val]
+
+    intercluster_splits['test_edges'] = test_edges[:, intercluster_mask_test]
+    intercluster_splits['test_true'] = test_true[intercluster_mask_test]
+
+
+    torch.save(splits, save_dir + f'splits_{n_partitions}.pt')
+    torch.save(intercluster_splits, save_dir + f'intercluster_splits_{n_partitions}.pt')
+    torch.save(node_to_partition, save_dir + f'node_to_partition_{n_partitions}.pt')
+
+    return splits, intercluster_splits, node_to_partition
+
+
+
+def compute_batch_stats(out, running_sum, running_sum_squared, running_n):
+    results = out.detach().clone()
+    running_sum += results.sum()
+    running_sum_squared += torch.dot(results, results)
+    running_n += len(results)
+    
+    running_mean = running_sum / running_n
+    
+    running_std = torch.sqrt(running_sum_squared / (running_n - 1)) - (running_mean ** 2)
+
+    # mean = min(out_flatten[valid_idx])
+    # std = max(out_flatten[valid_idx]) - min(out_flatten[valid_idx])
+    return running_mean, running_std, running_sum, running_sum_squared, running_n
